@@ -1,3 +1,6 @@
+# Estimation
+`estimation.r` performs an empirical labor economics analysis using worker–firm matched data before and after Covid. It estimates AKM-style firm wage premia from yearly wage data and applies a revealed-preference method to monthly worker mobility transitions in order to recover firm values, job opportunities, and worker preferences across firms. The script then compares outcomes by gender and period through summary statistics, difference-in-differences wage regressions, decomposition analyses, and visualizations such as wage distributions, firm premia distributions, and compensating differential plots. Finally, it exports regression tables, summary tables, figures, and estimated parameters.
+
 # Simulated Data Description
 1. `spell_year`:
 stacked worker–firm–year spell dataset  
