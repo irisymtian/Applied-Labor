@@ -5,8 +5,8 @@
 `simulated_final.r` mainly consists of three parts:
 - Data generation
 - PageRank function
-- Validity: the key is the correlation between the recovered value and simulated value.
-  We also include some code for the descriptive analyses and regressions we plan to run with DADS data.
+- Validity: the key is the correlation between the recovered value and simulated value.  
+  We also include some code for the descriptive analyses and regressions we plan to run with DADS data. 
 
 # Simulated Data Description
 1. `simulated_data_cache.rds`:  
