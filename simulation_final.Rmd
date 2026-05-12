@@ -1,0 +1,2529 @@
+---
+title: "Simulation"
+output:   
+  pdf_document: default
+#  html_document: default
+---
+
+# Introduction
+
+our idea:  
+women sorted to firms with lower wage premium even in pre period  
+women are more likely to receive low premium even within the same firm compared to men  
+Covid imposed same firm specific shock on non-wage factorsfor men and women  
+(as Covid makes WFH more available, bringing in more flexibility)  
+but female further sort out to firms with lower wage premium  
+because they value non wage factors than men ? or even more than themselves before Covid?  
+(as women are more likely to be the main caregivers at home & caregiving is more critical in the post-Covid period)  
+
+our assumptions:  
+1. Men and women operate in different labor markets:  
+ different wage premium (normaly lower for women) and value of non-wage factors  
+2. Covid shock is likely to have impacted these two markets at the same time but to different extents:  
+2.1. worker fixed effect pre/post unchanged: alpha_i  
+2.2. firm wage premium pre/post changed: psi  
+2.3. firm non-wage factor pre/post changed: amenity  
+2.4. female post-COVID non-wage shock is stronger: rho  
+2.5. female further sort out to firms with lower wage premium  
+
+# 0. Start
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(Matrix)
+library(igraph)
+library(modelsummary)
+
+set.seed(123)
+
+# Save simulated data to the project folder to avoid re-running every time
+project_output_dir <- "D:/master/M2/Applied Labor Economics/final/our code/simulation_rmd"
+script_path <- tryCatch(normalizePath(sys.frame(1)$ofile), error = function(e) NA_character_)
+output_dir <- if (dir.exists(project_output_dir)) {
+    project_output_dir
+} else if (!is.na(script_path)) {
+    dirname(script_path)
+} else {
+    getwd()
+}
+simulation_cache <- file.path(output_dir, "simulated_data_cache.rds")
+simulation_cache_version <- 2L
+force_resimulate <- FALSE
+
+cache_is_current <- FALSE
+if (!force_resimulate && file.exists(simulation_cache)) {
+    cached <- readRDS(simulation_cache)
+    cache_is_current <- is.list(cached) &&
+        isTRUE(cached$version == simulation_cache_version) &&
+        all(c("df", "df_simulated") %in% names(cached))
+}
+
+if (cache_is_current) {
+    df <- cached$df
+    df_simulated <- cached$df_simulated
+    df <- df %>%
+        mutate(period = factor(period, levels = c("pre", "post")))
+    df_simulated <- df_simulated %>%
+        mutate(period = factor(period, levels = c("pre", "post")))
+    print(paste0("Loaded cached simulated data from: ", simulation_cache))
+    print(paste0("Cached worker-period rows: ", nrow(df)))
+    print(paste0("Cached firm-period rows: ", nrow(df_simulated)))
+}
+```
+
+# 1. Basic parameters
+
+```{r}
+years <- c(2018, 2019, 2021, 2022)
+pre_years <- c(2018, 2019)
+post_years <- c(2021, 2022)
+year_pairs <- data.frame(
+    year1 = c(2018, 2021),
+    year2 = c(2019, 2022),
+    period = c("pre", "post")
+)
+
+n_firms <- 1500
+n_workers <- 300000
+worker_id <- 1:n_workers
+
+offer_shock_sd <- 0.15
+full_rank_damping <- 0.85
+lambda_grid <- seq(0.02, 0.50, by = 0.01)
+sorkin_max_iter <- 10
+sorkin_tol <- 1e-4
+
+if (!cache_is_current) {
+    female <- rbinom(n_workers, 1, 0.5)
+    birth_year <- sample(1965:1995, n_workers, replace = TRUE)
+
+    # worker fixed effects (same for each year)
+    alpha_i <- rnorm(n_workers, mean = 0, sd = 0.4)
+
+    # Firm wage premium: (should be estimated with real data from AKM)
+    # 1. common firm wage premium base (sd = 0.3)
+    psi_base <- scale(rnorm(n_firms))[, 1] * 0.3
+    # 2. COVID shock on wage premium (sd = 0.08)
+    psi_covid_shock <- scale(rnorm(n_firms))[, 1] * 0.08
+    # 3. women more likely to receive lower wage premium within same firm
+    female_penalty <- rnorm(n_firms, mean = -0.12, sd = 0.04)
+    print(paste0("mean of female_penalty:", mean(female_penalty)))
+    print(paste0("proportion of women receiving higher wage premium:", mean(female_penalty > 0)))
+
+    # Non-wage factors:
+    # 1. firm non-wage amenity base: higher = better non-wage value
+    amenity_base <- scale(rnorm(n_firms))[, 1]
+    # 2. Covid shock on non-wage factors (mostly improve as WFH is more common)
+    amenity_covid_shock <- rnorm(n_firms, mean = 0.25, sd = 0.25)
+    print(paste0("mean of amenity_covid_shock:", mean(amenity_covid_shock)))
+    print(paste0("proportion of improved amenity:", mean(amenity_covid_shock > 0)))
+}
+```
+
+# 2. Simulation
+
+```{r}
+if (cache_is_current) {
+    # The simulation is large.
+    # Reuse it unless you do not have simulated_data_cache.rds or change the file name above.
+} else {
+    print(paste0("Cache path checked: ", simulation_cache))
+    print("No current cached simulated data found. Running the simulation now.")
+
+    all_data <- list()
+    all_simulated <- list()
+
+    for (p in seq_len(nrow(year_pairs))) {
+        year1 <- year_pairs$year1[p]
+        year2 <- year_pairs$year2[p]
+        period <- year_pairs$period[p]
+
+        post <- ifelse(period == "post", 1, 0)
+
+        age1 <- year1 - birth_year
+        age2 <- year2 - birth_year
+
+        exp1 <- age1 - 22 # perfect linearity
+        exp2 <- age2 - 22
+        
+        #--------------------------
+        # 2.1. OUR DGP!
+        #--------------------------
+
+        # correlation between wage premium and value: after Covid female value non-wage even more
+        rho_female <- ifelse(post == 0, 0.6, 0.3)
+        rho_male <- ifelse(post == 0, 0.8, 0.7)
+        rho <- ifelse(female == 1, rho_female, rho_male)
+
+        # firm-level wage premium
+        psi_common <- psi_base + post * psi_covid_shock
+        psi_common <- scale(psi_common)[, 1] * 0.3
+
+        # women receive lower premium within same firm
+        psi_male <- psi_common
+        psi_female <- psi_common + female_penalty
+
+        # common firm-specific non-wage shock for men and women
+        amenity <- amenity_base + post * amenity_covid_shock
+
+        # gender-specific latent firm value
+        V_male_true <- rho_male * scale(psi_male)[, 1] +
+            sqrt(1 - rho_male^2) * scale(amenity)[, 1]
+
+        V_female_true <- rho_female * scale(psi_female)[, 1] +
+            sqrt(1 - rho_female^2) * scale(amenity)[, 1]
+
+        #--------------------------
+        # 2.2. firm-level objects
+        #--------------------------
+
+        lambda1 <- 0.20 # probability an employed worker receives an outside offer (find_lambda.m from Sorkin)
+        lambda_ene_base <- 0.08 # probability of an indirect employer change through nonemployment
+        sigma_eps <- 1 # scale of idiosyncratic utility shock
+
+        # firm size in the initial assignment: higher value = higher attractiveness = higher firm size
+        V_avg_true <- 0.5 * V_male_true + 0.5 * V_female_true
+        firm_size <- exp(0.3 * V_avg_true)
+        firm_size_prob <- firm_size / sum(firm_size)
+
+        # offer intensity f_j:
+        # Large random offer shocks make recovered ranks reflect recruiting intensity,
+        # not only worker-valued firm quality.
+        offer_shock <- rnorm(n_firms, 0, offer_shock_sd)
+        offer <- exp(0.5 * V_avg_true + offer_shock)
+        offer_prob <- offer / sum(offer)
+
+        #--------------------------
+        # 2.3. initial firms
+        #--------------------------
+
+        current_firm <- sample(1:n_firms, size = n_workers, replace = TRUE, prob = firm_size_prob)
+
+        psi_current <- ifelse(
+            female == 1,
+            psi_female[current_firm],
+            psi_male[current_firm]
+        )
+
+        # baseline wage in year 1: 10 + worker fixed effect + firm fixed effect + age and its polinomials (without exp1) + non-wage factor
+        logy1 <- 10 + alpha_i + psi_current +
+            0.03 * age1 - 0.0002 * age1^2 + 0.00001 * age1^3 +
+            rnorm(n_workers, 0, 0.2)
+
+        #--------------------------
+        # 2.4. outside offers and job-to-job decisions
+        #--------------------------
+
+        gets_offer <- rbinom(n_workers, size = 1, prob = lambda1)
+
+        # offered firm
+        offer_firm <- sample(1:n_firms, size = n_workers, replace = TRUE, prob = offer_prob)
+
+        # prevent same-firm "offers" by redrawing when necessary
+        same_firm <- which(offer_firm == current_firm)
+        while (length(same_firm) > 0) {
+            offer_firm[same_firm] <- sample(1:n_firms, size = length(same_firm), replace = TRUE, prob = offer_prob)
+            same_firm <- which(offer_firm == current_firm)
+        }
+        # EE -- Direct employer-to-employer move：
+        # workers compare utility current vs utility offer: U = common firm value + iid shock
+        V_current <- ifelse(
+            female == 1,
+            V_female_true[current_firm],
+            V_male_true[current_firm]
+        )
+
+        V_offer <- ifelse(
+            female == 1,
+            V_female_true[offer_firm],
+            V_male_true[offer_firm]
+        )
+
+        eps_current <- rnorm(n_workers, 0, sigma_eps)
+        eps_offer <- rnorm(n_workers, 0, sigma_eps)
+
+        U_current <- V_current + eps_current
+        U_offer <- V_offer + eps_offer
+
+        # revealed preferences
+        move <- ifelse(gets_offer == 1 & U_offer > U_current, 1, 0)
+
+        # ENE -- Indirect employer change through nonemployment：
+
+        # Lower-valued firms have higher separation risk
+        ene_prob <- plogis(qlogis(lambda_ene_base) - 0.35 * V_current)
+        ene <- as.integer(move == 0 & rbinom(n_workers, size = 1, prob = ene_prob) == 1)
+
+        # separated workers draw their next employer from the same offer-arrival distribution.
+        ene_firm <- sample(1:n_firms, size = n_workers, replace = TRUE, prob = offer_prob)
+        same_firm_ene <- which(ene == 1 & ene_firm == current_firm)
+        while (length(same_firm_ene) > 0) {
+            ene_firm[same_firm_ene] <- sample(
+                1:n_firms,
+                size = length(same_firm_ene),
+                replace = TRUE,
+                prob = offer_prob
+            )
+            same_firm_ene <- which(ene == 1 & ene_firm == current_firm)
+        }
+
+        next_firm <- ifelse(move == 1, offer_firm, ifelse(ene == 1, ene_firm, current_firm))
+
+        psi_next <- ifelse(
+            female == 1,
+            psi_female[next_firm],
+            psi_male[next_firm]
+        )
+
+        # year 2 wages
+        logy2 <- 10 + alpha_i + psi_next +
+            0.03 * age2 - 0.0002 * age2^2 + 0.00001 * age2^3 +
+            rnorm(n_workers, 0, 0.2)
+
+        # EE indicator: 1 if changed employer directly
+        ee <- as.integer(move == 1)
+
+        # ENE indicator: 1 if changed employer indirectly via nonemployment
+        ene <- as.integer(ene == 1)
+
+        #--------------------------
+        # 2.5. simulated dataset
+        #--------------------------
+
+        matrix_sim <- data.frame(
+            worker_id = worker_id,
+            female = female,
+            year1 = year1,
+            year2 = year2,
+            period = period,
+            age1 = age1,
+            age2 = age2,
+            index1 = current_firm,
+            index2 = next_firm,
+            logy1 = logy1,
+            logy2 = logy2,
+            ee = ee,
+            ene = ene
+        )
+
+        simulated <- data.frame(
+            firm_id = 1:n_firms,
+            period = period,
+            psi_male = psi_male,
+            psi_female = psi_female,
+            amenity = amenity,
+            female_penalty = female_penalty,
+            rho_male = rho_male,
+            rho_female = rho_female,
+            V_male_true = V_male_true,
+            V_female_true = V_female_true
+        )
+
+        all_data[[p]] <- matrix_sim
+        all_simulated[[p]] <- simulated
+    }
+
+    df <- bind_rows(all_data) #
+    df_simulated <- bind_rows(all_simulated)
+
+    # Keep the period ordering chronological in all tables and figures.
+    # Otherwise ggplot orders character labels alphabetically, putting "post"
+    # before "pre".
+    df <- df %>%
+        mutate(period = factor(period, levels = c("pre", "post")))
+    df_simulated <- df_simulated %>%
+        mutate(period = factor(period, levels = c("pre", "post")))
+
+    saveRDS(
+        list(
+            version = simulation_cache_version,
+            df = df,
+            df_simulated = df_simulated
+        ),
+        simulation_cache
+    )
+    print(paste0("Saved simulated data cache to: ", simulation_cache))
+}
+
+stopifnot(all(df$ee + df$ene <= 1))
+
+sorkin_empty_rank <- function(period_keep, gender_keep, method_keep) {
+    data.frame(
+        firm_id = integer(),
+        period = character(),
+        female = integer(),
+        method = character(),
+        V_hat = numeric()
+    )
+}
+
+# Stops early if an estimator produces too few usable observations
+require_rows <- function(data, min_rows, label) {
+    if (nrow(data) < min_rows) {
+        stop(paste0(
+            label,
+            " has only ",
+            nrow(data),
+            " usable rows. Check mobility rates or estimator connectivity before plotting."
+        ))
+    }
+    invisible(data)
+}
+
+# Builds the directed mobility matrix used by PageRank
+# Columns are origin firms and rows are destination firms
+# matches the Sorkin code: M[j, k] is the number of moves from k to j.
+build_count_matrix <- function(origin, dest, n_nodes) {
+    if (length(origin) == 0) {
+        return(matrix(0, nrow = n_nodes, ncol = n_nodes))
+    }
+
+    # M[dest, origin] counts moves from origin to destination.
+    # sparseMatrix automatically sums duplicate origin-destination pairs.
+    as.matrix(sparseMatrix(
+        i = dest,
+        j = origin,
+        x = 1,
+        dims = c(n_nodes, n_nodes)
+    ))
+}
+
+# Standardizes a vector when it has variation; otherwise only recenters it
+# This keeps constants from becoming NA when sd(x) is zero.
+standardize_or_center <- function(x) {
+    sx <- sd(x, na.rm = TRUE)
+    if (is.na(sx) || sx == 0) {
+        return(as.numeric(x - mean(x, na.rm = TRUE)))
+    }
+    as.numeric((x - mean(x, na.rm = TRUE)) / sx)
+}
+
+# Converts a noisy cardinal score into a normal-score ranking.
+# This is useful for PageRank/eigenvector-style firm values:
+# the rank order is the identifying information,
+# while raw eigenvector magnitudes can explode in finite simulated mobility graphs with weakly connected firms.
+rank_to_normal_score <- function(x) {
+    ok <- is.finite(x) & !is.na(x)
+    out <- rep(NA_real_, length(x))
+    n_ok <- sum(ok)
+    if (n_ok < 2) {
+        out[ok] <- 0
+        return(out)
+    }
+    r <- rank(x[ok], ties.method = "average")
+    p <- (r - 0.5) / n_ok
+    out[ok] <- qnorm(p)
+    standardize_or_center(out)
+}
+
+# Small helper: escapes underscores for laTeX
+escape_latex <- function(x) {
+    x <- as.character(x)
+    gsub("_", "\\\\_", x, fixed = TRUE)
+}
+
+# LaTeX table
+write_simple_latex_table <- function(tab, path, caption = NULL, digits = 3) {
+    tab_out <- tab
+    for (nm in names(tab_out)) {
+        if (is.numeric(tab_out[[nm]])) {
+            tab_out[[nm]] <- ifelse(
+                is.na(tab_out[[nm]]),
+                "",
+                formatC(tab_out[[nm]], digits = digits, format = "f")
+            )
+        } else {
+            tab_out[[nm]] <- escape_latex(tab_out[[nm]])
+        }
+    }
+    lines <- c(
+        "\\begin{table}[!htbp]\\centering",
+        if (!is.null(caption)) paste0("\\caption{", escape_latex(caption), "}") else NULL,
+        paste0("\\begin{tabular}{", paste(rep("l", ncol(tab_out)), collapse = ""), "}"),
+        "\\hline",
+        paste(escape_latex(names(tab_out)), collapse = " & "),
+        "\\\\ \\hline"
+    )
+    body <- apply(tab_out, 1, function(z) paste(z, collapse = " & "))
+    lines <- c(lines, paste0(body, " \\\\"), "\\hline", "\\end{tabular}", "\\end{table}")
+    writeLines(lines, path)
+}
+
+# Finds the largest connected part of the mobility graph.
+# The strict Sorkin estimator uses the largest strongly connected component;
+# weak connectivity is only used as a finite-simulation fallback.
+largest_component_nodes <- function(M, strong = TRUE) {
+    g <- graph_from_adjacency_matrix(
+        t(M),
+        mode = "directed",
+        weighted = TRUE,
+        diag = FALSE
+    )
+
+    scc <- components(g, mode = ifelse(strong, "strong", "weak"))
+    which(scc$membership == which.max(scc$csize))
+}
+
+# EE: job-to-job moves only
+# extracts the eigenvector from the largest connected mobility graph.
+recover_sorkin_value <- function(M, node_ids, min_nodes = 10) {
+    diag(M) <- 0
+
+    # Sorkin choice: largest strongly connected component.
+    # (In small simulated subsamples this can occasionally be too small,
+    # especially when many transitions pass through nonemployment. )
+    # Our fallback: largest weakly connected active component & tiny pseudo-flow
+
+    keep <- largest_component_nodes(M, strong = TRUE)
+    active <- which(rowSums(M) > 0 & colSums(M) > 0)
+    used_weak_fallback <- FALSE
+
+    if (length(intersect(keep, active)) < min_nodes) {
+        keep <- intersect(largest_component_nodes(M, strong = FALSE), active)
+        used_weak_fallback <- TRUE
+        message(
+            "Using weak-component fallback because the strict strongly connected ",
+            "set had fewer than ", min_nodes, " active nodes."
+        )
+    }
+
+    if (length(keep) < 2) {
+        return(data.frame(node_id = integer(), V_hat = numeric()))
+    }
+
+    M_sub <- M[keep, keep, drop = FALSE]
+    node_ids_sub <- node_ids[keep]
+
+    if (used_weak_fallback) {
+        pseudo_flow <- 1e-6
+        M_sub <- M_sub + pseudo_flow
+        diag(M_sub) <- 0
+    }
+
+    # M_sub[dest, origin] stores moves from origin to destination (tilde_exptV.m)
+    # The normalization follows tilde_exptV.m: S = diag(sum(M_sub));
+    # A = solve(S) %*% M_sub.
+    outflow <- colSums(M_sub)
+    keep_positive <- which(outflow > 0)
+
+    if (length(keep_positive) < 2) {
+        return(data.frame(node_id = integer(), V_hat = numeric()))
+    }
+
+    M_sub <- M_sub[keep_positive, keep_positive, drop = FALSE]
+    node_ids_sub <- node_ids_sub[keep_positive]
+    S_sub <- diag(colSums(M_sub))
+    A <- solve(S_sub) %*% M_sub
+
+    eig <- eigen(A)
+    idx <- which.max(Re(eig$values))
+
+    q <- abs(Re(eig$vectors[, idx]))
+    q <- pmax(q, 1e-10)
+
+    # The eigenvector is positive only up to scale.
+    # We use a rank-normalized version
+    # so one tiny eigenvector cell cannot dominate the graph.
+    data.frame(
+        node_id = node_ids_sub,
+        V_hat = rank_to_normal_score(log(q))
+    )
+}
+
+# EE+ENE
+# the ranking remains defined when some firms have sparse flows
+recover_augmented_value <- function(M, node_ids, damping = full_rank_damping) {
+    diag(M) <- 0
+    active <- which(rowSums(M) > 0 | colSums(M) > 0)
+
+    if (length(active) < 2) {
+        return(data.frame(node_id = integer(), V_hat = numeric()))
+    }
+
+    M_sub <- M[active, active, drop = FALSE]
+    node_ids_sub <- node_ids[active]
+    outflow <- colSums(M_sub)
+    n <- nrow(M_sub)
+
+    # Full EE+ENE matrices can be weakly connected because nonemployment is a hub.
+    # To keep the estimator usable in simulation, we use a damped transition matrix:
+    # columns with no outflow send equal mass everywhere, and every column receives
+    # a small teleportation probability. This is a stable approximation to the
+    # full mobility ranking, while the EE-only option above keeps the stricter
+    # Sorkin eigenvector.
+    A <- matrix(1 / n, nrow = n, ncol = n)
+    positive_outflow <- which(outflow > 0)
+    A[, positive_outflow] <- sweep(
+        M_sub[, positive_outflow, drop = FALSE],
+        2,
+        outflow[positive_outflow],
+        "/"
+    )
+
+    A <- damping * A + (1 - damping) * matrix(1 / n, nrow = n, ncol = n)
+
+    eig <- eigen(A)
+    idx <- which.max(Re(eig$values))
+    q <- abs(Re(eig$vectors[, idx]))
+    q <- pmax(q / sum(q), 1e-10)
+
+    # Damped PageRank score from the full EE+ENE graph. Rank-normalization keeps
+    # the plot and regressions about ordering, not arbitrary eigenvector scale.
+    data.frame(
+        node_id = node_ids_sub,
+        V_hat = rank_to_normal_score(log(q))
+    )
+}
+
+# Stable validation ranking based on net inflows. It is less structural than
+# Sorkin's full model, but very useful for diagnosing simulated mobility data.
+recover_full_flow_score <- function(data, period_keep, gender_keep) {
+    d <- data %>%
+        filter(period == period_keep)
+
+    if (!is.null(gender_keep)) {
+        d <- d %>% filter(female == gender_keep)
+    }
+
+    # Full-flow validation score:
+    # - EE and ENE destinations are evidence that a firm is attractive.
+    # - EE and ENE origins are evidence that workers leave that firm.
+    # - The +1 smoothing keeps every firm in the graph and prevents log(0).
+    # This is intentionally simpler and more stable than the structural Sorkin
+    # loop. It is the right object for checking whether the simulated mobility
+    # patterns point toward the true latent firm value.
+    transition_rows <- d %>%
+        filter((ee == 1 | ene == 1), index1 != index2)
+
+    inflow <- transition_rows %>%
+        count(index2, name = "inflow") %>%
+        rename(firm_id = index2)
+
+    outflow <- transition_rows %>%
+        count(index1, name = "outflow") %>%
+        rename(firm_id = index1)
+
+    data.frame(firm_id = 1:n_firms) %>%
+        left_join(inflow, by = "firm_id") %>%
+        left_join(outflow, by = "firm_id") %>%
+        mutate(
+            inflow = replace_na(inflow, 0),
+            outflow = replace_na(outflow, 0),
+            V_hat = rank_to_normal_score(log((inflow + 1) / (outflow + 1))),
+            period = period_keep,
+            female = gender_keep,
+            method = "full"
+        ) %>%
+        select(firm_id, period, female, method, V_hat)
+}
+
+# Constructs the augmented firm/nonemployment transition matrix and the objects
+# needed to recover lambda and employer value in the Sorkin-style model.
+build_sorkin_inputs <- function(data, period_keep, gender_keep) {
+    d <- data %>%
+        filter(period == period_keep)
+
+    if (!is.null(gender_keep)) {
+        d <- d %>% filter(female == gender_keep)
+    }
+
+    ee_rows <- d %>% filter(ee == 1, index1 != index2)
+    ene_rows <- d %>% filter(ene == 1, index1 != index2)
+
+    nonemployment_node <- 1L
+    n_nodes <- n_firms + 1L
+
+    origin <- c(
+        ee_rows$index1 + 1L,
+        ene_rows$index1 + 1L,
+        rep(nonemployment_node, nrow(ene_rows))
+    )
+    dest <- c(
+        ee_rows$index2 + 1L,
+        rep(nonemployment_node, nrow(ene_rows)),
+        ene_rows$index2 + 1L
+    )
+
+    M <- build_count_matrix(origin = origin, dest = dest, n_nodes = n_nodes)
+
+    # g_level is firm employment/person-years. Node 1 is nonemployment.
+    g_level <- numeric(n_nodes)
+    origin_counts <- tabulate(d$index1 + 1L, nbins = n_nodes)
+    g_level <- g_level + origin_counts
+
+    # fo_level is hires from nonemployment, i.e. ENE destinations.
+    fo_level <- numeric(n_nodes)
+    fo_level <- fo_level + tabulate(ene_rows$index2 + 1L, nbins = n_nodes)
+    fo_level[nonemployment_node] <- max(1, sum(fo_level))
+
+    list(
+        data = d,
+        ee_rows = ee_rows,
+        ene_rows = ene_rows,
+        M = M,
+        g_level = g_level,
+        fo_level = fo_level,
+        ee_count = nrow(ee_rows),
+        ene_count = nrow(ene_rows),
+        nonemployment_node = nonemployment_node
+    )
+}
+
+# Recovers exp(V) from the augmented transition matrix using a damped
+# eigenvector/PageRank step.
+recover_exptv_damped <- function(M, damping = full_rank_damping) {
+    diag(M) <- 0
+    n <- nrow(M)
+    outflow <- colSums(M)
+
+    # Sorkin's tilde_exptV solves the eigenvector of a column-normalized mobility
+    # matrix. The damping term keeps simulated finite samples from collapsing when
+    # the mobility graph is not fully strongly connected.
+    A <- matrix(1 / n, nrow = n, ncol = n)
+    positive_outflow <- which(outflow > 0)
+    A[, positive_outflow] <- sweep(
+        M[, positive_outflow, drop = FALSE],
+        2,
+        outflow[positive_outflow],
+        "/"
+    )
+    A <- damping * A + (1 - damping) * matrix(1 / n, nrow = n, ncol = n)
+
+    eig <- eigen(A)
+    idx <- which.max(Re(eig$values))
+    exptV <- abs(Re(eig$vectors[, idx]))
+    pmax(exptV / sum(exptV), 1e-10)
+}
+
+# Given a candidate lambda, recovers employer value and the implied offer
+# distribution, then compares the model-implied EE rate with the data.
+sorkin_given_lambda <- function(M, exptV, g_level, fo_level, lambda1, n_groups = 200) {
+    eps <- 1e-8
+    g_level <- pmax(g_level, 0)
+    fo_level <- pmax(fo_level, 0)
+
+    # Smooth the nonemployment-hire distribution so b = exp(V) * g / fo is finite
+    # for every firm. This is a finite-simulation safeguard; with large real data,
+    # Sorkin restricts to firms with nonemployment hires.
+    fo <- (fo_level + eps) / sum(fo_level + eps)
+    g <- (g_level + eps) / sum(g_level + eps)
+    g_ns <- g
+
+    hires_ne <- sum(fo_level)
+    W <- sum(g_level)
+    if (hires_ne <= 0 || W <= 0) {
+        return(NULL)
+    }
+
+    b <- (exptV * g_ns) / fo
+    a <- (exptV[1] * hires_ne) / W
+    a2 <- a / (1 - lambda1)
+    CexpV <- b - a2
+
+    positive <- CexpV > 0 & is.finite(CexpV)
+    if (!any(positive)) {
+        return(NULL)
+    }
+    CexpV[!positive] <- min(CexpV[positive])
+
+    fC <- fo * (b / CexpV)
+    C1 <- 1 / sum(fC[-1])
+    f <- fC[-1] * C1
+
+    expVe <- CexpV[-1] / C1
+    expVn_init <- a2 / C1
+    expVe <- expVe / expVn_init
+    Ve <- log(pmax(expVe, eps))
+    Ve_raw <- Ve
+
+    firm_g <- g[-1]
+    firm_g <- firm_g / sum(firm_g)
+    f <- pmax(f, eps)
+    f <- f / sum(f)
+
+    # Match lambda by comparing the model-implied EE rate to the observed EE rate.
+    # Sorkin groups firms by V_e for speed. We do the same, with fewer groups for R.
+    ord <- order(Ve)
+    Ve2 <- Ve[ord]
+    g2 <- firm_g[ord]
+    f2 <- f[ord]
+    cum_g <- cumsum(g2)
+    group <- pmin(n_groups, floor(cum_g * n_groups) + 1L)
+
+    grouped <- data.frame(group = group, Ve = Ve2, g = g2, f = f2) %>%
+        group_by(group) %>%
+        summarise(
+            Ve = weighted.mean(Ve, g),
+            g = sum(g),
+            f = sum(f),
+            .groups = "drop"
+        )
+
+    P <- outer(
+        exp(grouped$Ve),
+        exp(grouped$Ve),
+        FUN = function(i, j) i / (i + j)
+    )
+    diag(P) <- 0
+    prob_accept_model <- mean(as.numeric(t(grouped$f) %*% P))
+    ee_prob_model <- lambda1 * prob_accept_model
+
+    ee_prob_data <- sum(M[-1, -1]) / sum(g_level[-1])
+    gap <- abs(ee_prob_model - ee_prob_data) / max(ee_prob_data, eps)
+
+    list(
+        gap = gap,
+        Ve = rank_to_normal_score(Ve_raw),
+        Ve_raw = Ve_raw,
+        f = f,
+        C1 = C1,
+        ee_prob_model = ee_prob_model,
+        ee_prob_data = ee_prob_data
+    )
+}
+
+# Searches over lambda values and keeps the one whose model-implied EE rate is
+# closest to the observed EE rate.
+estimate_lambda_and_ve <- function(M, g_level, fo_level, grid = lambda_grid) {
+    exptV <- recover_exptv_damped(M)
+    fits <- lapply(grid, function(lambda1) {
+        fit <- sorkin_given_lambda(M, exptV, g_level, fo_level, lambda1)
+        if (is.null(fit)) {
+            return(data.frame(lambda = lambda1, gap = Inf))
+        }
+        data.frame(
+            lambda = lambda1,
+            gap = fit$gap,
+            ee_prob_model = fit$ee_prob_model,
+            ee_prob_data = fit$ee_prob_data
+        )
+    }) %>%
+        bind_rows()
+
+    best_lambda <- fits$lambda[which.min(fits$gap)]
+    best_fit <- sorkin_given_lambda(M, exptV, g_level, fo_level, best_lambda)
+
+    list(
+        lambda = best_lambda,
+        grid = fits,
+        Ve = best_fit$Ve,
+        f = best_fit$f,
+        C1 = best_fit$C1,
+        exptV = exptV,
+        ee_prob_data = best_fit$ee_prob_data,
+        ee_prob_model = best_fit$ee_prob_model
+    )
+}
+
+# Converts recovered value, offer probabilities, and lambda into model-consistent
+# EE and EN transition rates.
+model_consistent_rates <- function(Ve, f, lambda1, g_level) {
+    eps <- 1e-8
+    n_firms_local <- length(Ve)
+    expVe <- exp(Ve)
+    f <- pmax(f, eps)
+    f <- f / sum(f)
+
+    # Probability a worker at firm j accepts an EE offer from the offer distribution.
+    # P[i, j] is acceptance probability for destination i from origin j.
+    P <- outer(expVe, expVe, FUN = function(i, j) i / (i + j))
+    diag(P) <- 0
+    prob_accept_ee <- as.numeric(t(f) %*% P)
+    ee_counterfactual <- lambda1 * pmin(pmax(prob_accept_ee, 0), 1)
+
+    # Probability of EN separation/nonemployment acceptance. Vn is normalized to 0.
+    en_counterfactual <- (1 - lambda1) * (1 / (expVe + 1))
+    en_counterfactual <- pmin(pmax(en_counterfactual, 0), 1)
+
+    # Avoid exactly zero weights, which can disconnect the finite simulated graph.
+    list(
+        ee = pmax(ee_counterfactual, eps),
+        en = pmax(en_counterfactual, eps)
+    )
+}
+
+# Reweights the observed transition graph using the model-consistent EE and EN
+# rates from the previous iteration.
+compute_weighted_M <- function(inputs, ee_counterfactual, en_counterfactual) {
+    n_nodes <- n_firms + 1L
+    nonemployment_node <- 1L
+
+    ee_rows <- inputs$ee_rows
+    ene_rows <- inputs$ene_rows
+
+    origin <- c(
+        ee_rows$index1 + 1L,
+        ene_rows$index1 + 1L,
+        rep(nonemployment_node, nrow(ene_rows))
+    )
+    dest <- c(
+        ee_rows$index2 + 1L,
+        rep(nonemployment_node, nrow(ene_rows)),
+        ene_rows$index2 + 1L
+    )
+    weights <- c(
+        ee_counterfactual[ee_rows$index1],
+        en_counterfactual[ene_rows$index1],
+        rep(1, nrow(ene_rows))
+    )
+
+    if (length(origin) == 0) {
+        return(matrix(0, nrow = n_nodes, ncol = n_nodes))
+    }
+
+    as.matrix(sparseMatrix(
+        i = dest,
+        j = origin,
+        x = weights,
+        dims = c(n_nodes, n_nodes)
+    ))
+}
+
+# Iterates between lambda/value recovery and transition-matrix reweighting until
+# the recovered employer values stabilize.
+estimate_sorkin_iterative <- function(inputs, grid = lambda_grid,
+                                      max_iter = sorkin_max_iter,
+                                      tol = sorkin_tol) {
+    M_current <- inputs$M
+    previous_Ve <- NULL
+    history <- list()
+
+    for (iter in seq_len(max_iter)) {
+        fit <- estimate_lambda_and_ve(M_current, inputs$g_level, inputs$fo_level, grid)
+        rates <- model_consistent_rates(fit$Ve, fit$f, fit$lambda, inputs$g_level)
+
+        if (is.null(previous_Ve)) {
+            corr_old_new <- NA_real_
+            gap <- Inf
+        } else {
+            corr_old_new <- suppressWarnings(cor(previous_Ve, fit$Ve, use = "complete.obs"))
+            gap <- mean(abs(previous_Ve - fit$Ve), na.rm = TRUE)
+        }
+
+        history[[iter]] <- data.frame(
+            iteration = iter,
+            lambda_hat = fit$lambda,
+            ee_prob_data = fit$ee_prob_data,
+            ee_prob_model = fit$ee_prob_model,
+            mean_abs_change = gap,
+            corr_old_new = corr_old_new
+        )
+
+        if (!is.null(previous_Ve) && is.finite(gap) && gap < tol) {
+            return(list(
+                fit = fit,
+                history = bind_rows(history),
+                M_final = M_current,
+                ee_counterfactual = rates$ee,
+                en_counterfactual = rates$en,
+                converged = TRUE
+            ))
+        }
+
+        previous_Ve <- fit$Ve
+        M_current <- compute_weighted_M(inputs, rates$ee, rates$en)
+    }
+
+    list(
+        fit = fit,
+        history = bind_rows(history),
+        M_final = M_current,
+        ee_counterfactual = rates$ee,
+        en_counterfactual = rates$en,
+        converged = FALSE
+    )
+}
+
+# Full Sorkin-style recovery for one gender-period cell. It saves lambda and
+# iteration diagnostics, and falls back to the stable ranking only if the finite
+# simulated graph produces a degenerate cardinal value vector.
+recover_sorkin_full_model <- function(data, period_keep, gender_keep) {
+    inputs <- build_sorkin_inputs(data, period_keep, gender_keep)
+    if ((inputs$ee_count + inputs$ene_count) == 0) {
+        return(sorkin_empty_rank(period_keep, gender_keep, "sorkin_full"))
+    }
+
+    iter_fit <- estimate_sorkin_iterative(inputs)
+    fit <- iter_fit$fit
+    iteration_history <- iter_fit$history %>%
+        mutate(period = period_keep, female = gender_keep)
+    print(iteration_history)
+
+    history_path <- file.path(
+        output_dir,
+        paste0("sorkin_iteration_history_", period_keep, "_female", gender_keep, ".csv")
+    )
+    write.csv(iteration_history, history_path, row.names = FALSE)
+
+    print(data.frame(
+        period = period_keep,
+        female = gender_keep,
+        lambda_hat = fit$lambda,
+        ee_prob_data = fit$ee_prob_data,
+        ee_prob_model = fit$ee_prob_model,
+        ee_moves = inputs$ee_count,
+        ene_moves = inputs$ene_count,
+        converged = iter_fit$converged,
+        iterations = nrow(iter_fit$history)
+    ))
+
+    value_out <- data.frame(
+        firm_id = 1:n_firms,
+        period = period_keep,
+        female = gender_keep,
+        method = "sorkin_full",
+        lambda_hat = fit$lambda,
+        offer_hat = fit$f,
+        # fit$Ve is already rank-normalized inside sorkin_given_lambda().
+        # Applying the transformation again is harmless and protects the rest
+        # of the script if that internal normalization is changed later.
+        V_hat = rank_to_normal_score(fit$Ve)
+    )
+
+    bad_value <- sum(is.finite(value_out$V_hat)) < 10 ||
+        sd(value_out$V_hat, na.rm = TRUE) == 0 ||
+        max(abs(value_out$V_hat), na.rm = TRUE) > 4
+
+    if (bad_value) {
+        warning(
+            "Sorkin full value was degenerate for period=", period_keep,
+            ", female=", gender_keep,
+            ". Falling back to the stable full-flow PageRank score for V_hat, ",
+            "while keeping lambda_hat from the Sorkin step."
+        )
+        value_out <- recover_full_flow_score(data, period_keep, gender_keep) %>%
+            mutate(
+                method = "sorkin_full_rank_fallback",
+                lambda_hat = fit$lambda,
+                offer_hat = fit$f
+            )
+    }
+
+    value_out
+}
+
+```
+
+# 3. revealed-preference ranking function
+```{r}
+# Public wrapper choosing which revealed-preference ranking to estimate:
+# EE-only, stable full-flow, or full Sorkin-style EE+ENE.
+estimate_rank <- function(data, period_keep, gender_keep = NULL, method_keep = "ee") {
+    d <- data %>%
+        filter(period == period_keep)
+
+    if (!is.null(gender_keep)) {
+        d <- d %>% filter(female == gender_keep)
+    }
+
+    if (!method_keep %in% c("ee", "full", "sorkin_full")) {
+        stop("method_keep must be 'ee', 'full', or 'sorkin_full'")
+    }
+
+    #--------------------------
+    # 3.1 construct mobility matrix M[j, k] = moves from k to j
+    #--------------------------
+
+    ee_rows <- d %>% filter(ee == 1, index1 != index2)
+    ene_rows <- d %>% filter(ene == 1, index1 != index2)
+
+    print(paste0(
+        "Period: ", period_keep,
+        ", gender: ", gender_keep,
+        ", method: ", method_keep,
+        ", Number of EE moves: ", nrow(ee_rows),
+        ", Number of ENE moves: ", nrow(ene_rows)
+    ))
+
+    if (method_keep == "ee" && nrow(ee_rows) == 0) {
+        return(sorkin_empty_rank(period_keep, gender_keep, method_keep))
+    }
+
+    if (method_keep == "full" && (nrow(ee_rows) + nrow(ene_rows)) == 0) {
+        return(sorkin_empty_rank(period_keep, gender_keep, method_keep))
+    }
+
+    if (method_keep == "sorkin_full" && (nrow(ee_rows) + nrow(ene_rows)) == 0) {
+        return(sorkin_empty_rank(period_keep, gender_keep, method_keep))
+    }
+
+    if (method_keep == "ee") {
+        node_ids <- 1:n_firms
+        M <- build_count_matrix(
+            origin = ee_rows$index1,
+            dest = ee_rows$index2,
+            n_nodes = n_firms
+        )
+        recovered <- recover_sorkin_value(M, node_ids)
+        return(recovered %>%
+            transmute(
+                firm_id = node_id,
+                period = period_keep,
+                female = gender_keep,
+                method = method_keep,
+                V_hat = V_hat
+            ))
+    }
+
+    if (method_keep == "sorkin_full") {
+        return(recover_sorkin_full_model(data, period_keep, gender_keep))
+    }
+
+    recover_full_flow_score(data, period_keep, gender_keep)
+}
+```
+
+# 5. Estimation
+```{r}
+#--------------------------
+# 5.0 data preparation & summary
+#--------------------------
+
+wage_long <- bind_rows(
+    df %>%
+        transmute(
+            worker_id,
+            female,
+            period,
+            year = year1,
+            age = age1,
+            firm_id = index1,
+            logy = logy1
+        ),
+    df %>%
+        transmute(
+            worker_id,
+            female,
+            period,
+            year = year2,
+            age = age2,
+            firm_id = index2,
+            logy = logy2
+        )
+) %>%
+    mutate(
+        female = as.integer(female),
+        gender = ifelse(female == 1, "Female", "Male"),
+        post = as.integer(period == "post")
+    )
+
+# Estimate AKM-style firm effects separately within each gender-period cell.
+# The model is log wage = worker FE + firm FE + year FE + age controls + error.
+# To avoid requiring large external fixed-effect packages, the code first removes
+# age and year effects, then alternates between worker and firm means until the
+# two sets of fixed effects stabilize. The firm effects are centered to have
+# employment-weighted mean zero inside each gender-period cell.
+estimate_akm_firm_premia <- function(data_subset, max_iter = 200, tol = 1e-7) {
+    require_rows(data_subset, min_rows = 10, label = "AKM subset")
+
+    base_resid <- resid(lm(logy ~ age + I(age^2) + I(age^3) + factor(year), data = data_subset))
+    worker_levels <- sort(unique(data_subset$worker_id))
+    firm_levels <- sort(unique(data_subset$firm_id))
+
+    worker_index <- match(data_subset$worker_id, worker_levels)
+    firm_index <- match(data_subset$firm_id, firm_levels)
+
+    alpha <- numeric(length(worker_levels))
+    psi <- numeric(length(firm_levels))
+
+    for (iter in seq_len(max_iter)) {
+        old_psi <- psi
+
+        alpha <- rowsum(base_resid - psi[firm_index], worker_index, reorder = FALSE)[, 1] /
+            as.vector(tabulate(worker_index, nbins = length(worker_levels)))
+
+        psi <- rowsum(base_resid - alpha[worker_index], firm_index, reorder = FALSE)[, 1] /
+            as.vector(tabulate(firm_index, nbins = length(firm_levels)))
+
+        firm_weights <- as.vector(tabulate(firm_index, nbins = length(firm_levels)))
+        psi <- psi - weighted.mean(psi, firm_weights)
+
+        change <- max(abs(psi - old_psi), na.rm = TRUE)
+        if (is.finite(change) && change < tol) {
+            break
+        }
+    }
+
+    data.frame(
+        firm_id = firm_levels,
+        psi_hat = as.numeric(psi),
+        n_obs = as.vector(tabulate(firm_index, nbins = length(firm_levels)))
+    )
+}
+
+# Run the AKM estimator four times, matching the report: male-pre, male-post,
+# female-pre, and female-post are treated as separate labor markets.
+akm_firm_premia_long <- wage_long %>%
+    group_by(period, female) %>%
+    group_modify(~ estimate_akm_firm_premia(.x)) %>%
+    ungroup() %>%
+    mutate(
+        gender = ifelse(female == 1, "Female", "Male")
+    )
+
+write.csv(
+    akm_firm_premia_long,
+    file.path(output_dir, "akm_firm_premia_gender_period.csv"),
+    row.names = FALSE
+)
+
+summary_table <- wage_long %>%
+    group_by(gender, period) %>%
+    summarise(
+        n_obs = n(),
+        n_workers = n_distinct(worker_id),
+        n_firms = n_distinct(firm_id),
+        mean_log_wage = mean(logy, na.rm = TRUE),
+        sd_log_wage = sd(logy, na.rm = TRUE),
+        p10_log_wage = quantile(logy, 0.10, na.rm = TRUE),
+        p50_log_wage = quantile(logy, 0.50, na.rm = TRUE),
+        p90_log_wage = quantile(logy, 0.90, na.rm = TRUE),
+        mean_age = mean(age, na.rm = TRUE),
+        sd_age = sd(age, na.rm = TRUE),
+        .groups = "drop"
+    )
+
+# One consolidated descriptive table by year and gender.
+# EE/ENE moves are attached to the origin year of the transition: in the current
+# annual simulation, this means 2018 for pre moves and 2021 for post moves.
+true_firm_premia_long <- bind_rows(
+    df_simulated %>%
+        transmute(
+            firm_id,
+            period,
+            gender = "Male",
+            psi_true = psi_male
+        ),
+    df_simulated %>%
+        transmute(
+            firm_id,
+            period,
+            gender = "Female",
+            psi_true = psi_female
+        )
+)
+
+mobility_by_year_gender <- df %>%
+    mutate(
+        year = year1,
+        gender = ifelse(female == 1, "Female", "Male")
+    ) %>%
+    group_by(year, gender) %>%
+    summarise(
+        num_ee = sum(ee, na.rm = TRUE),
+        num_ene = sum(ene, na.rm = TRUE),
+        ee_rate = mean(ee, na.rm = TRUE),
+        ene_rate = mean(ene, na.rm = TRUE),
+        .groups = "drop"
+    )
+
+data_summary_by_year_gender <- wage_long %>%
+    left_join(
+        akm_firm_premia_long %>% select(period, female, firm_id, psi_hat),
+        by = c("period", "female", "firm_id")
+    ) %>%
+    left_join(
+        true_firm_premia_long,
+        by = c("period", "gender", "firm_id")
+    ) %>%
+    group_by(year, gender) %>%
+    summarise(
+        num_obs = n(),
+        num_workers = n_distinct(worker_id),
+        num_firms = n_distinct(firm_id),
+        mean_log_wage = mean(logy, na.rm = TRUE),
+        sd_log_wage = sd(logy, na.rm = TRUE),
+        mean_akm_psi = mean(psi_hat, na.rm = TRUE),
+        sd_akm_psi = sd(psi_hat, na.rm = TRUE),
+        p10_akm_psi = quantile(psi_hat, 0.10, na.rm = TRUE),
+        p50_akm_psi = quantile(psi_hat, 0.50, na.rm = TRUE),
+        p90_akm_psi = quantile(psi_hat, 0.90, na.rm = TRUE),
+        mean_true_psi = mean(psi_true, na.rm = TRUE),
+        sd_true_psi = sd(psi_true, na.rm = TRUE),
+        .groups = "drop"
+    ) %>%
+    left_join(mobility_by_year_gender, by = c("year", "gender")) %>%
+    mutate(
+        num_ee = replace_na(num_ee, 0),
+        num_ene = replace_na(num_ene, 0),
+        ee_rate = replace_na(ee_rate, 0),
+        ene_rate = replace_na(ene_rate, 0)
+    ) %>%
+    arrange(year, gender)
+
+print(data_summary_by_year_gender)
+
+write.csv(
+    data_summary_by_year_gender,
+    file.path(output_dir, "data_summary_by_year_gender.csv"),
+    row.names = FALSE
+)
+
+write_simple_latex_table(
+    data_summary_by_year_gender,
+    file.path(output_dir, "data_summary_by_year_gender_full.tex"),
+    caption = "Summary Statistics by Year and Gender"
+)
+
+data_summary_by_year_gender_neat <- data_summary_by_year_gender %>%
+    transmute(
+        year,
+        gender,
+        workers = num_workers,
+        firms = num_firms,
+        EE = num_ee,
+        ENE = num_ene,
+        `EE rate` = ee_rate,
+        `ENE rate` = ene_rate,
+        `Mean log wage` = mean_log_wage,
+        `Mean AKM psi` = mean_akm_psi,
+        `Mean true psi` = mean_true_psi
+    )
+
+write_simple_latex_table(
+    data_summary_by_year_gender_neat,
+    file.path(output_dir, "data_summary_by_year_gender.tex"),
+    caption = "Summary Statistics by Year and Gender"
+)
+
+
+modelsummary::datasummary_df(
+    summary_table,
+    output = file.path(output_dir, "summary_statistics.tex"),
+    title = "Summary Statistics by Gender and Period"
+)
+
+firm_gap <- df_simulated %>%
+    mutate(
+        post = as.integer(period == "post"),
+        psi_gap = psi_female - psi_male,
+        V_gap_true = V_female_true - V_male_true
+    )
+
+mobility_summary <- df %>%
+    group_by(period, female) %>%
+    summarise(
+        ee_moves = sum(ee),
+        ene_moves = sum(ene),
+        stayers = sum(ee == 0 & ene == 0),
+        ee_rate = mean(ee),
+        ene_rate = mean(ene),
+        .groups = "drop"
+    )
+
+print(mobility_summary)
+
+#--------------------------
+# 5.1 gender pay gap (simulated data) and the the impact of Covid
+#--------------------------
+
+pay_gap_summary <- wage_long %>%
+    group_by(period, female) %>%
+    summarise(
+        mean_logy = mean(logy),
+        sd_logy = sd(logy),
+        n = n(),
+        .groups = "drop"
+    )
+
+pay_gap_did <- lm(logy ~ female * post + age + I(age^2) + I(age^3) + factor(year), data = wage_long)
+pay_gap_raw_did <- lm(logy ~ female * post, data = wage_long)
+
+print(pay_gap_summary)
+print(summary(pay_gap_did))
+
+#--------------------------
+# 5.2 gender gap in firm premium and the the impact of Covid
+#--------------------------
+
+akm_premia_wide <- akm_firm_premia_long %>%
+    select(firm_id, period, female, psi_hat) %>%
+    pivot_wider(
+        names_from = female,
+        values_from = psi_hat,
+        names_prefix = "female_"
+    ) %>%
+    rename(
+        psi_hat_male = female_0,
+        psi_hat_female = female_1
+    ) %>%
+    mutate(
+        post = as.integer(period == "post"),
+        psi_gap_hat = psi_hat_female - psi_hat_male
+    )
+
+firm_premium_gap_summary <- akm_premia_wide %>%
+    group_by(period) %>%
+    summarise(
+        mean_psi_male = mean(psi_hat_male, na.rm = TRUE),
+        mean_psi_female = mean(psi_hat_female, na.rm = TRUE),
+        mean_psi_gap = mean(psi_gap_hat, na.rm = TRUE),
+        sd_psi_gap = sd(psi_gap_hat, na.rm = TRUE),
+        n_firms = n(),
+        .groups = "drop"
+    )
+
+firm_premium_gap_did <- lm(psi_gap_hat ~ post, data = akm_premia_wide)
+
+print(firm_premium_gap_summary)
+print(summary(firm_premium_gap_did))
+
+#--------------------------
+# 5.3 V_hat and the the impact of Covid
+#--------------------------
+
+# Use the iterative Sorkin-style model: recover exp(V), grid-search lambda,
+# recover Ve, compute model-consistent EE/EN rates, and iterate.
+# For quick debugging only, set rank_method <- "full" to use the stable
+# inflow/outflow validation score instead.
+rank_method <- "sorkin_full"
+
+rank_male_pre_raw <- estimate_rank(df, period_keep = "pre", gender_keep = 0, method_keep = rank_method)
+rank_male_post_raw <- estimate_rank(df, period_keep = "post", gender_keep = 0, method_keep = rank_method)
+rank_female_pre_raw <- estimate_rank(df, period_keep = "pre", gender_keep = 1, method_keep = rank_method)
+rank_female_post_raw <- estimate_rank(df, period_keep = "post", gender_keep = 1, method_keep = rank_method)
+
+lambda_summary <- bind_rows(
+    rank_male_pre_raw,
+    rank_male_post_raw,
+    rank_female_pre_raw,
+    rank_female_post_raw
+) %>%
+    distinct(period, female, method, lambda_hat) %>%
+    mutate(
+        gender = ifelse(female == 1, "Female", "Male"),
+        # In the current simulation the true outside-offer probability is 0.20
+        # in both periods and for both genders. This is useful for checking the
+        # recovered lambda, but remember that lambda is estimated from accepted
+        # EE moves, so it does not have to match exactly in finite samples.
+        lambda_true = 0.20,
+        lambda_error = lambda_hat - lambda_true
+    )
+
+print(lambda_summary)
+write.csv(
+    lambda_summary,
+    file.path(output_dir, "sorkin_lambda_estimates.csv"),
+    row.names = FALSE
+)
+
+rank_male_pre <- rank_male_pre_raw %>%
+    transmute(firm_id, V_male_pre = V_hat)
+
+rank_male_post <- rank_male_post_raw %>%
+    transmute(firm_id, V_male_post = V_hat)
+
+rank_female_pre <- rank_female_pre_raw %>%
+    transmute(firm_id, V_female_pre = V_hat)
+
+rank_female_post <- rank_female_post_raw %>%
+    transmute(firm_id, V_female_post = V_hat)
+
+rank_all <- rank_male_pre %>%
+    full_join(rank_male_post, by = "firm_id") %>%
+    full_join(rank_female_pre, by = "firm_id") %>%
+    full_join(rank_female_post, by = "firm_id")
+
+require_rows(rank_all, min_rows = 2, label = "rank_all")
+
+rank_coverage <- data.frame(
+    measure = c("male_pre", "male_post", "female_pre", "female_post"),
+    recovered_firms = c(
+        sum(!is.na(rank_all$V_male_pre)),
+        sum(!is.na(rank_all$V_male_post)),
+        sum(!is.na(rank_all$V_female_pre)),
+        sum(!is.na(rank_all$V_female_post))
+    )
+)
+
+print(rank_coverage)
+
+rank_all <- rank_all %>%
+    mutate(
+        delta_male = V_male_post - V_male_pre,
+        delta_female = V_female_post - V_female_pre,
+        gender_gap_pre = V_female_pre - V_male_pre,
+        gender_gap_post = V_female_post - V_male_post,
+        did_gender_sorting = gender_gap_post - gender_gap_pre
+    )
+
+print(summary(rank_all$did_gender_sorting))
+print(summary(lm(did_gender_sorting ~ 1, data = rank_all))) # check if the mean of did_gender_sorting is 0
+
+V_hat_gap_summary <- rank_all %>%
+    summarise(
+        mean_male_pre = mean(V_male_pre, na.rm = TRUE),
+        mean_male_post = mean(V_male_post, na.rm = TRUE),
+        mean_female_pre = mean(V_female_pre, na.rm = TRUE),
+        mean_female_post = mean(V_female_post, na.rm = TRUE),
+        mean_gender_gap_pre = mean(gender_gap_pre, na.rm = TRUE),
+        mean_gender_gap_post = mean(gender_gap_post, na.rm = TRUE),
+        mean_did_gender_sorting = mean(did_gender_sorting, na.rm = TRUE),
+        n_firms = n()
+    )
+
+print(V_hat_gap_summary)
+
+V_hat_gap_did_data <- rank_all %>%
+    select(firm_id, gender_gap_pre, gender_gap_post) %>%
+    pivot_longer(
+        cols = c(gender_gap_pre, gender_gap_post),
+        names_to = "period",
+        values_to = "V_gap_hat"
+    ) %>%
+    mutate(
+        period = ifelse(period == "gender_gap_post", "post", "pre"),
+        post = as.integer(period == "post")
+    )
+
+V_hat_gap_did <- lm(V_gap_hat ~ post, data = V_hat_gap_did_data)
+
+# Sorkin-style sorting component of the gender gap.
+# The gender difference in firm premia is evaluated using two price systems:
+# male firm premia and female firm premia. This follows the idea that the same
+# gender difference in firm allocation can have different wage implications
+# depending on whose firm-premium schedule is used.
+employment_shares <- wage_long %>%
+    count(period, female, firm_id, name = "n") %>%
+    group_by(period, female) %>%
+    mutate(share = n / sum(n)) %>%
+    ungroup() %>%
+    select(period, female, firm_id, share) %>%
+    pivot_wider(
+        names_from = female,
+        values_from = share,
+        names_prefix = "female_",
+        values_fill = 0
+    ) %>%
+    rename(
+        share_male = female_0,
+        share_female = female_1
+    )
+
+sorkin_gender_gap_by_price <- employment_shares %>%
+    left_join(akm_premia_wide, by = c("period", "firm_id")) %>%
+    mutate(share_gap = share_female - share_male) %>%
+    group_by(period) %>%
+    summarise(
+        sorting_gap_male_price = sum(share_gap * psi_hat_male, na.rm = TRUE),
+        sorting_gap_female_price = sum(share_gap * psi_hat_female, na.rm = TRUE),
+        n_firms = n(),
+        .groups = "drop"
+    ) %>%
+    mutate(post = as.integer(period == "post"))
+
+sorkin_male_price_did <- lm(sorting_gap_male_price ~ post, data = sorkin_gender_gap_by_price)
+sorkin_female_price_did <- lm(sorting_gap_female_price ~ post, data = sorkin_gender_gap_by_price)
+
+write.csv(
+    sorkin_gender_gap_by_price,
+    file.path(output_dir, "sorkin_gender_gap_female_male_prices.csv"),
+    row.names = FALSE
+)
+
+# Sorkin-style opportunity/preference decomposition.
+# Preferences are represented by recovered firm values V_hat.
+# Opportunities are represented by recovered offer probabilities f_hat.
+# For each period, we build four model-implied firm allocations:
+#   male opportunities + male preferences,
+#   male opportunities + female preferences,
+#   female opportunities + male preferences,
+#   female opportunities + female preferences.
+# Comparing these allocations isolates the role of preferences, opportunities,
+# and their interaction in the firm-sorting component of the gender gap.
+rank_offer_long <- bind_rows(
+    rank_male_pre_raw,
+    rank_male_post_raw,
+    rank_female_pre_raw,
+    rank_female_post_raw
+) %>%
+    mutate(gender = ifelse(female == 1, "female", "male")) %>%
+    select(firm_id, period, gender, V_hat, offer_hat)
+
+make_model_share <- function(offer, value) {
+    eps <- 1e-8
+    offer_clean <- ifelse(is.finite(offer) & !is.na(offer), offer, eps)
+    value_clean <- ifelse(is.finite(value) & !is.na(value), value, 0)
+
+    # A simple Sorkin-style stationary allocation: more offers and higher
+    # worker value both increase the share of workers employed at a firm.
+    weights <- pmax(offer_clean, eps) * exp(standardize_or_center(value_clean))
+    weights / sum(weights, na.rm = TRUE)
+}
+
+sorkin_preference_opportunity_data <- rank_offer_long %>%
+    pivot_wider(
+        names_from = gender,
+        values_from = c(V_hat, offer_hat),
+        names_sep = "_"
+    ) %>%
+    left_join(employment_shares, by = c("period", "firm_id")) %>%
+    left_join(akm_premia_wide, by = c("period", "firm_id")) %>%
+    group_by(period) %>%
+    group_modify(~ {
+        d <- .x
+        d$share_model_mm <- make_model_share(d$offer_hat_male, d$V_hat_male)
+        d$share_model_mf <- make_model_share(d$offer_hat_male, d$V_hat_female)
+        d$share_model_fm <- make_model_share(d$offer_hat_female, d$V_hat_male)
+        d$share_model_ff <- make_model_share(d$offer_hat_female, d$V_hat_female)
+        d
+    }) %>%
+    ungroup()
+
+compute_decomposition_for_price <- function(data, price_var, price_label) {
+    data %>%
+        group_by(period) %>%
+        summarise(
+            price_system = price_label,
+            observed_sorting_gap = sum((share_female - share_male) * .data[[price_var]], na.rm = TRUE),
+            model_sorting_gap = sum((share_model_ff - share_model_mm) * .data[[price_var]], na.rm = TRUE),
+            preference_component = sum((share_model_mf - share_model_mm) * .data[[price_var]], na.rm = TRUE),
+            opportunity_component = sum((share_model_fm - share_model_mm) * .data[[price_var]], na.rm = TRUE),
+            interaction_component = model_sorting_gap - preference_component - opportunity_component,
+            n_firms = n(),
+            .groups = "drop"
+        )
+}
+
+sorkin_preference_opportunity <- bind_rows(
+    compute_decomposition_for_price(sorkin_preference_opportunity_data, "psi_hat_male", "Male price"),
+    compute_decomposition_for_price(sorkin_preference_opportunity_data, "psi_hat_female", "Female price")
+) %>%
+    arrange(price_system, period)
+
+sorkin_preference_opportunity_change <- sorkin_preference_opportunity %>%
+    select(-n_firms) %>%
+    pivot_longer(
+        cols = c(
+            observed_sorting_gap,
+            model_sorting_gap,
+            preference_component,
+            opportunity_component,
+            interaction_component
+        ),
+        names_to = "component",
+        values_to = "value"
+    ) %>%
+    pivot_wider(names_from = period, values_from = value) %>%
+    mutate(
+        change_post_minus_pre = post - pre
+    )
+
+write.csv(
+    sorkin_preference_opportunity,
+    file.path(output_dir, "sorkin_preference_opportunity_by_period.csv"),
+    row.names = FALSE
+)
+
+write.csv(
+    sorkin_preference_opportunity_change,
+    file.path(output_dir, "sorkin_preference_opportunity_change.csv"),
+    row.names = FALSE
+)
+
+write_sorkin_decomposition_latex_table <- function(decomp_change, path,
+                                                   caption = "Sorkin Preference and Opportunity Decomposition",
+                                                   digits = 3) {
+    component_labels <- c(
+        "observed_sorting_gap" = "Observed sorting gap",
+        "model_sorting_gap" = "Model sorting gap",
+        "preference_component" = "Preferences",
+        "opportunity_component" = "Opportunities",
+        "interaction_component" = "Interaction"
+    )
+
+    fmt <- function(x) ifelse(is.na(x), "", formatC(x, digits = digits, format = "f"))
+
+    table_wide <- decomp_change %>%
+        mutate(component = component_labels[component]) %>%
+        pivot_wider(
+            id_cols = component,
+            names_from = price_system,
+            values_from = c(pre, post, change_post_minus_pre),
+            names_glue = "{price_system}: {.value}"
+        )
+
+    desired_cols <- c(
+        "component",
+        "Male price: pre",
+        "Male price: post",
+        "Male price: change_post_minus_pre",
+        "Female price: pre",
+        "Female price: post",
+        "Female price: change_post_minus_pre"
+    )
+    table_wide <- table_wide[, desired_cols]
+    names(table_wide) <- c(
+        "",
+        "Pre",
+        "Post",
+        "Post-Pre",
+        "Pre",
+        "Post",
+        "Post-Pre"
+    )
+
+    for (j in seq_along(table_wide)) {
+        if (is.numeric(table_wide[[j]])) {
+            table_wide[[j]] <- fmt(table_wide[[j]])
+        }
+    }
+
+    body <- apply(table_wide, 1, function(row) paste(escape_latex(row), collapse = " & "))
+    lines <- c(
+        "\\begin{table}[!htbp]\\centering",
+        paste0("\\caption{", escape_latex(caption), "}"),
+        "\\begin{tabular}{lcccccc}",
+        "\\hline",
+        " & \\multicolumn{3}{c}{Male price} & \\multicolumn{3}{c}{Female price} \\\\",
+        "\\cline{2-4} \\cline{5-7}",
+        paste(names(table_wide), collapse = " & "),
+        "\\\\ \\hline",
+        paste0(body, " \\\\"),
+        "\\hline",
+        "\\multicolumn{7}{l}{\\footnotesize{Preferences use recovered firm values; opportunities use recovered offer probabilities.}} \\\\",
+        "\\multicolumn{7}{l}{\\footnotesize{Post-Pre is the change in the decomposition after Covid relative to before Covid.}} \\\\",
+        "\\end{tabular}",
+        "\\end{table}"
+    )
+    writeLines(lines, path)
+}
+
+write_sorkin_decomposition_latex_table(
+    sorkin_preference_opportunity_change,
+    file.path(output_dir, "sorkin_preference_opportunity_table.tex")
+)
+
+#--------------------------
+# 5.4 V_true (simulated data) and the the impact of Covid
+#--------------------------
+
+V_true_gap_summary <- firm_gap %>%
+    group_by(period) %>%
+    summarise(
+        mean_V_male_true = mean(V_male_true),
+        mean_V_female_true = mean(V_female_true),
+        mean_V_gap_true = mean(V_gap_true),
+        sd_V_gap_true = sd(V_gap_true),
+        n_firms = n(),
+        .groups = "drop"
+    )
+
+V_true_gap_did <- lm(V_gap_true ~ post, data = firm_gap)
+
+print(V_true_gap_summary)
+print(summary(V_true_gap_did))
+
+extract_did_row <- function(model, term, outcome_label) {
+    coefs <- summary(model)$coefficients
+    if (!term %in% rownames(coefs)) {
+        return(data.frame(
+            outcome = outcome_label,
+            did_term = term,
+            estimate = NA_real_,
+            std_error = NA_real_,
+            p_value = NA_real_,
+            n = nobs(model)
+        ))
+    }
+    data.frame(
+        outcome = outcome_label,
+        did_term = term,
+        estimate = coefs[term, "Estimate"],
+        std_error = coefs[term, "Std. Error"],
+        p_value = coefs[term, "Pr(>|t|)"],
+        n = nobs(model)
+    )
+}
+
+# Adds the conventional significance stars used in regression tables.
+significance_stars <- function(p_value) {
+    if (is.na(p_value)) {
+        return("")
+    }
+    if (p_value < 0.001) {
+        return("***")
+    }
+    if (p_value < 0.01) {
+        return("**")
+    }
+    if (p_value < 0.05) {
+        return("*")
+    }
+    if (p_value < 0.1) {
+        return("+")
+    }
+    ""
+}
+
+# Writes a regression-style LaTeX table like the one used in the report:
+# coefficients are stacked over standard errors, model fit statistics are at
+# the bottom, and the DID term is displayed alongside the controls.
+write_did_regression_latex_table <- function(models, path, caption = "Regression Results",
+                                             term_labels = NULL, year_fe = NULL,
+                                             digits = 3) {
+    model_names <- paste0("(", seq_along(models), ")")
+    all_terms <- unique(unlist(lapply(models, function(model) rownames(summary(model)$coefficients))))
+    all_terms <- all_terms[all_terms != "(Intercept)"]
+
+    preferred_order <- c(
+        "female",
+        "post",
+        "female:post",
+        "age",
+        "I(age^2)",
+        "I(age^3)"
+    )
+    term_order <- c(preferred_order[preferred_order %in% all_terms], setdiff(all_terms, preferred_order))
+
+    if (is.null(term_labels)) {
+        term_labels <- term_order
+        names(term_labels) <- term_order
+    }
+    if (is.null(year_fe)) {
+        year_fe <- rep(FALSE, length(models))
+    }
+
+    fmt_num <- function(x) {
+        ifelse(is.na(x), "", formatC(x, digits = digits, format = "f"))
+    }
+
+    table_rows <- list()
+    for (term in term_order) {
+        coef_row <- c(ifelse(term %in% names(term_labels), term_labels[[term]], term))
+        se_row <- c("")
+
+        for (model in models) {
+            coefs <- summary(model)$coefficients
+            if (term %in% rownames(coefs)) {
+                estimate <- coefs[term, "Estimate"]
+                std_error <- coefs[term, "Std. Error"]
+                p_value <- coefs[term, "Pr(>|t|)"]
+                coef_row <- c(coef_row, paste0(fmt_num(estimate), significance_stars(p_value)))
+                se_row <- c(se_row, paste0("(", fmt_num(std_error), ")"))
+            } else {
+                coef_row <- c(coef_row, "")
+                se_row <- c(se_row, "")
+            }
+        }
+
+        table_rows[[length(table_rows) + 1]] <- coef_row
+        table_rows[[length(table_rows) + 1]] <- se_row
+    }
+
+    add_stat_row <- function(label, values) {
+        c(label, values)
+    }
+
+    nobs_row <- add_stat_row("Num.Obs.", formatC(sapply(models, nobs), format = "d"))
+    r2_row <- add_stat_row("R2", fmt_num(sapply(models, function(model) summary(model)$r.squared)))
+    adj_r2_row <- add_stat_row("R2 Adj.", fmt_num(sapply(models, function(model) summary(model)$adj.r.squared)))
+    aic_row <- add_stat_row("AIC", fmt_num(sapply(models, AIC)))
+    bic_row <- add_stat_row("BIC", fmt_num(sapply(models, BIC)))
+    rmse_row <- add_stat_row("RMSE", fmt_num(sapply(models, function(model) sqrt(mean(resid(model)^2, na.rm = TRUE)))))
+    year_fe_row <- add_stat_row("FE: year", ifelse(year_fe, "x", ""))
+
+    table_rows <- c(
+        table_rows,
+        list(nobs_row, r2_row, adj_r2_row, aic_row, bic_row, rmse_row, year_fe_row)
+    )
+
+    body <- vapply(
+        table_rows,
+        function(row) paste(escape_latex(row), collapse = " & "),
+        character(1)
+    )
+
+    lines <- c(
+        "\\begin{table}[!htbp]\\centering",
+        paste0("\\caption{", escape_latex(caption), "}"),
+        paste0("\\begin{tabular}{l", paste(rep("c", length(models)), collapse = ""), "}"),
+        "\\hline",
+        paste(c("", model_names), collapse = " & "),
+        "\\\\ \\hline",
+        paste0(body, " \\\\"),
+        "\\hline",
+        "\\multicolumn{", length(models) + 1, "}{l}{\\footnotesize{+ p $<$ 0.1, * p $<$ 0.05, ** p $<$ 0.01, *** p $<$ 0.001}} \\\\",
+        "\\end{tabular}",
+        "\\end{table}"
+    )
+    writeLines(lines, path)
+}
+
+did_results_table <- bind_rows(
+    extract_did_row(pay_gap_raw_did, "female:post", "Raw log wage gender gap"),
+    extract_did_row(pay_gap_did, "female:post", "Adjusted log wage gender gap"),
+    extract_did_row(firm_premium_gap_did, "post", "AKM firm-premium gender gap"),
+    extract_did_row(V_hat_gap_did, "post", "Recovered firm-value gender gap"),
+    extract_did_row(V_true_gap_did, "post", "True firm-value gender gap"),
+    extract_did_row(sorkin_male_price_did, "post", "Sorkin sorting gap, male price"),
+    extract_did_row(sorkin_female_price_did, "post", "Sorkin sorting gap, female price")
+)
+
+print(did_results_table)
+
+write.csv(
+    did_results_table,
+    file.path(output_dir, "did_results_table.csv"),
+    row.names = FALSE
+)
+
+write_simple_latex_table(
+    did_results_table,
+    file.path(output_dir, "did_results_summary_table.tex"),
+    caption = "Difference-in-Differences Summary"
+)
+
+rank_worker_long <- rank_offer_long %>%
+    mutate(
+        gender = ifelse(gender == "female", "Female", "Male"),
+        female = as.integer(gender == "Female")
+    ) %>%
+    select(firm_id, period, female, V_hat)
+
+did_worker_regression_data <- wage_long %>%
+    left_join(
+        akm_firm_premia_long %>% select(period, female, firm_id, psi_hat),
+        by = c("period", "female", "firm_id")
+    ) %>%
+    left_join(
+        rank_worker_long,
+        by = c("period", "female", "firm_id")
+    )
+
+firm_premium_worker_did <- lm(psi_hat ~ female * post, data = did_worker_regression_data)
+firm_premium_worker_year_did <- lm(psi_hat ~ female * post + factor(year), data = did_worker_regression_data)
+
+did_regression_models <- list(
+    "log(hourly wage)" = pay_gap_raw_did,
+    "log(hourly wage)" = pay_gap_did,
+    "firm premia" = firm_premium_worker_did,
+    "firm premia" = firm_premium_worker_year_did
+)
+
+did_regression_extra_rows <- data.frame(
+    term = c("Std.Errors", "FE: year"),
+    `log(hourly wage)` = c("by: worker_id", ""),
+    `log(hourly wage)` = c("by: worker_id", "x"),
+    `firm premia` = c("by: worker_id", ""),
+    `firm premia` = c("by: worker_id", "x"),
+    check.names = FALSE
+)
+
+modelsummary::modelsummary(
+    did_regression_models,
+    output = file.path(output_dir, "did_results_table.tex"),
+    title = "Regression Results",
+    coef_map = c(
+        "female" = "female",
+        "post" = "post",
+        "female:post" = "female-post",
+        "age" = "age",
+        "I(age^2)" = "age2",
+        "I(age^3)" = "age3"
+    ),
+    vcov = list(
+        ~worker_id,
+        ~worker_id,
+        ~worker_id,
+        ~worker_id
+    ),
+    stars = c("+" = 0.1, "*" = 0.05, "**" = 0.01, "***" = 0.001),
+    gof_map = c("nobs", "r.squared", "adj.r.squared", "aic", "bic", "rmse"),
+    add_rows = did_regression_extra_rows,
+    notes = "+ p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001"
+)
+
+#--------------------------
+# 5.5 check the correlation of V_hat between male and female, pre and post sepearately
+#--------------------------
+
+V_hat_correlations <- data.frame(
+    period = c("pre", "post"),
+    corr_male_female = c(
+        cor(rank_all$V_male_pre, rank_all$V_female_pre, use = "complete.obs"),
+        cor(rank_all$V_male_post, rank_all$V_female_post, use = "complete.obs")
+    ),
+    n_complete = c(
+        sum(complete.cases(rank_all$V_male_pre, rank_all$V_female_pre)),
+        sum(complete.cases(rank_all$V_male_post, rank_all$V_female_post))
+    )
+)
+
+print(V_hat_correlations)
+
+#--------------------------
+# 5.6 check the correlation of V_true between male and female, pre and post sepearately
+#--------------------------
+
+V_true_correlations <- firm_gap %>%
+    group_by(period) %>%
+    summarise(
+        corr_male_female = cor(V_male_true, V_female_true),
+        n_firms = n(),
+        .groups = "drop"
+    )
+
+print(V_true_correlations)
+```
+
+# 6. Visualization (for both true simulated data and estimated data)
+
+```{r}
+#--------------------------
+# 6.0 data preparation
+#--------------------------
+
+# rank_all to long format
+rank_all_long <- rank_all %>%
+    select(
+        firm_id,
+        V_male_pre,
+        V_male_post,
+        V_female_pre,
+        V_female_post
+    ) %>%
+    tidyr::pivot_longer(
+        cols = -firm_id,
+        names_to = c("gender", "period"),
+        names_pattern = "V_(male|female)_(pre|post)",
+        values_to = "V_hat"
+    )
+
+# df_simulated to long format
+df_simulated_male <- df_simulated %>%
+    select(
+        firm_id, period,
+        V_male_true,
+        psi_male
+    ) %>%
+    mutate(gender = "male") %>%
+    rename(
+        V_true = V_male_true,
+        psi = psi_male
+    )
+
+df_simulated_female <- df_simulated %>%
+    select(
+        firm_id, period,
+        V_female_true,
+        psi_female
+    ) %>%
+    mutate(gender = "female") %>%
+    rename(
+        V_true = V_female_true,
+        psi = psi_female
+    )
+
+df_simulated_long <- bind_rows(df_simulated_male, df_simulated_female)
+
+# merge estimated ranks with true simulated firm values
+comparison <- rank_all_long %>%
+    left_join(
+        df_simulated_long,
+        by = c("firm_id", "period", "gender")
+    ) %>%
+    left_join(
+        akm_firm_premia_long %>%
+            mutate(gender = ifelse(female == 1, "female", "male")) %>%
+            select(firm_id, period, gender, psi_hat),
+        by = c("firm_id", "period", "gender")
+    )
+
+require_rows(
+    comparison %>% filter(!is.na(V_hat), !is.na(V_true)),
+    min_rows = 2,
+    label = "comparison data for validity plots"
+)
+
+# sanity check：
+# 1.how many firms in each gender-period?
+print(table(comparison$gender, comparison$period))
+# 2. any missing value especially in V_hat?
+print(colSums(is.na(comparison)))
+
+psi_validation_plot_data <- comparison %>%
+    filter(!is.na(psi), !is.na(psi_hat)) %>%
+    group_by(gender, period) %>%
+    mutate(
+        # AKM firm effects are normalized within gender-period cells and can
+        # contain finite-sample outliers when identification comes from a small
+        # mover set. Rank-normalizing both axes makes the plot a cleaner check
+        # of whether AKM recovers the ordering of true firm premia.
+        psi_true_rank = rank_to_normal_score(psi),
+        psi_hat_rank = rank_to_normal_score(psi_hat)
+    ) %>%
+    ungroup() %>%
+    transmute(
+        firm_id,
+        gender,
+        period,
+        psi_true_rank,
+        psi_hat_rank
+    )
+
+psi_validation_summary <- psi_validation_plot_data %>%
+    group_by(gender, period) %>%
+    summarise(
+        corr_rank_true_recovered_psi = cor(psi_hat_rank, psi_true_rank, use = "complete.obs"),
+        n_firms = n(),
+        .groups = "drop"
+    )
+
+print(psi_validation_summary)
+
+write.csv(
+    psi_validation_summary,
+    file.path(output_dir, "validity_check_firm_premia_summary.csv"),
+    row.names = FALSE
+)
+
+write.csv(
+    psi_validation_plot_data,
+    file.path(output_dir, "validity_check_firm_premia_plot_data.csv"),
+    row.names = FALSE
+)
+
+# Estimated firm premia to long format for the density plot below.
+firm_premia_long <- akm_firm_premia_long %>%
+    transmute(
+        firm_id,
+        period,
+        gender,
+        psi = psi_hat
+    )
+
+# V_true and V_hat distribution data
+value_dist_long <- comparison %>%
+    filter(!is.na(V_hat), !is.na(V_true)) %>%
+    transmute(
+        firm_id,
+        gender = ifelse(gender == "female", "Female", "Male"),
+        period,
+        `Recovered value: V_hat` = V_hat,
+        `True value: V_true` = V_true
+    ) %>%
+    pivot_longer(
+        cols = c(`Recovered value: V_hat`, `True value: V_true`),
+        names_to = "value_type",
+        values_to = "value"
+    )
+#--------------------------
+# 6.1 Check for validity of our measure based on our simulation
+#--------------------------
+
+# total sample
+# Report both the raw correlation and the rank-normalized plotting correlation.
+# The graph should never use raw PageRank/Sorkin magnitudes directly because a
+# few weakly connected firms can stretch the axis and destroy the visual check.
+validity_raw <- cor(comparison$V_hat, comparison$V_true, use = "complete.obs")
+
+print(paste0(
+    "the raw correlation between full-model V_hat and V_true for total sample: ",
+    validity_raw
+))
+
+comparison_plot <- comparison %>%
+    filter(!is.na(V_hat), !is.na(V_true)) %>%
+    transmute(
+        firm_id,
+        # Rank-normalizing both axes prevents a few finite-sample PageRank
+        # outliers from stretching the figure while preserving the ordering.
+        hat = rank_to_normal_score(V_hat),
+        true = rank_to_normal_score(V_true)
+    )
+
+require_rows(comparison_plot, min_rows = 2, label = "total-sample validity plot data")
+
+validity_rank <- cor(comparison_plot$hat, comparison_plot$true, use = "complete.obs")
+print(paste0(
+    "the rank-normalized plotting correlation between V_hat and V_true for total sample: ",
+    validity_rank
+))
+
+write.csv(
+    comparison_plot,
+    file.path(output_dir, "validity_check_plot_data.csv"),
+    row.names = FALSE
+)
+
+line_range <- range(c(comparison_plot$hat, comparison_plot$true), finite = TRUE)
+line_45 <- data.frame(
+    x = line_range[1],
+    xend = line_range[2],
+    y = line_range[1],
+    yend = line_range[2],
+    line_type = "45-degree line"
+)
+
+p1 <- ggplot(comparison_plot, aes(x = hat, y = true)) +
+    geom_segment(
+        data = line_45,
+        aes(x = x, y = y, xend = xend, yend = yend, linetype = line_type),
+        color = "grey40",
+        linewidth = 0.8,
+        inherit.aes = FALSE,
+        show.legend = TRUE
+    ) +
+    geom_point(color = "grey60", size = 0.75, alpha = 0.50, show.legend = FALSE) +
+    geom_smooth(
+        aes(linetype = "Linear fit"),
+        method = "lm",
+        se = FALSE,
+        color = "black",
+        linewidth = 1.1,
+        show.legend = TRUE
+    ) +
+    scale_linetype_manual(
+        name = "Line",
+        breaks = c("45-degree line", "Linear fit"),
+        labels = c("45 degree", "Fitted line"),
+        values = c(
+            "45-degree line" = "dashed",
+            "Linear fit" = "solid"
+        )
+    ) +
+    labs(
+        x = "Recovered firm value (standardized V_hat)",
+        y = "True latent firm value (standardized V_true)",
+        title = "Validity check of revealed-preference ranking (total sample)"
+    ) +
+    coord_equal() +
+    theme_classic(base_size = 14) +
+    theme(
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom"
+    )
+
+validity_check_path <- file.path(output_dir, "validity_check.png")
+ggsave(validity_check_path, plot = p1, width = 8, height = 6, dpi = 300)
+print(paste0("Saved: ", normalizePath(validity_check_path, mustWork = FALSE)))
+
+# gender_period subsamples
+validity_sub <- comparison %>%
+    group_by(gender, period) %>%
+    summarise(
+        raw_corr = cor(V_hat, V_true, use = "complete.obs"),
+        n = sum(complete.cases(V_hat, V_true)),
+        .groups = "drop"
+    )
+print("the correlation between V_hat and V_true for gender_period subsamples: ")
+print(validity_sub)
+
+comparison_plot_sub <- comparison %>%
+    filter(!is.na(V_hat), !is.na(V_true)) %>%
+    group_by(gender, period) %>%
+    mutate(
+        # Rank-normalize within each panel, since the plot is faceted by
+        # gender-period and each recovered ranking is estimated separately.
+        hat = rank_to_normal_score(V_hat),
+        true = rank_to_normal_score(V_true)
+    ) %>%
+    ungroup() %>%
+    select(firm_id, gender, period, hat, true)
+
+require_rows(comparison_plot_sub, min_rows = 2, label = "subsample validity plot data")
+
+validity_sub_rank <- comparison_plot_sub %>%
+    group_by(gender, period) %>%
+    summarise(
+        rank_plot_corr = cor(hat, true, use = "complete.obs"),
+        n = sum(complete.cases(hat, true)),
+        .groups = "drop"
+    )
+print("the rank-normalized plotting correlation between V_hat and V_true for gender_period subsamples: ")
+print(validity_sub_rank)
+
+write.csv(
+    comparison_plot_sub,
+    file.path(output_dir, "validity_check_sub_plot_data.csv"),
+    row.names = FALSE
+)
+
+line_45_sub <- comparison_plot_sub %>%
+    group_by(gender, period) %>%
+    summarise(
+        x = min(c(hat, true), na.rm = TRUE),
+        xend = max(c(hat, true), na.rm = TRUE),
+        y = x,
+        yend = xend,
+        line_type = "45-degree line",
+        .groups = "drop"
+    )
+
+p1_sub <- ggplot(comparison_plot_sub, aes(x = hat, y = true)) +
+    geom_segment(
+        data = line_45_sub,
+        aes(x = x, y = y, xend = xend, yend = yend, linetype = line_type),
+        color = "grey40",
+        linewidth = 0.8,
+        inherit.aes = FALSE,
+        show.legend = TRUE
+    ) +
+    geom_point(color = "grey60", size = 0.75, alpha = 0.50, show.legend = FALSE) +
+    geom_smooth(
+        aes(linetype = "Linear fit"),
+        method = "lm",
+        se = FALSE,
+        color = "black",
+        linewidth = 1.1,
+        show.legend = TRUE
+    ) +
+    facet_grid(gender ~ period) +
+    scale_linetype_manual(
+        name = "Line",
+        breaks = c("45-degree line", "Linear fit"),
+        labels = c("45 degree", "Fitted line"),
+        values = c(
+            "45-degree line" = "dashed",
+            "Linear fit" = "solid"
+        )
+    ) +
+    labs(
+        x = "Recovered firm value (standardized V_hat)",
+        y = "True latent firm value (standardized V_true)",
+        title = "Validity check of revealed-preference ranking (gender_period subsamples)"
+    ) +
+    coord_equal() +
+    theme_classic(base_size = 14) +
+    theme(
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom"
+    )
+
+validity_check_sub_path <- file.path(output_dir, "validity_check_sub.png")
+ggsave(validity_check_sub_path, plot = p1_sub, width = 8, height = 6, dpi = 300)
+print(paste0("Saved: ", normalizePath(validity_check_sub_path, mustWork = FALSE)))
+
+#--------------------------
+# 6.1.1 Validity check for AKM-recovered firm premia
+#--------------------------
+
+psi_line_45 <- psi_validation_plot_data %>%
+    group_by(gender, period) %>%
+    summarise(
+        x = min(c(psi_hat_rank, psi_true_rank), na.rm = TRUE),
+        xend = max(c(psi_hat_rank, psi_true_rank), na.rm = TRUE),
+        y = x,
+        yend = xend,
+        line_type = "45-degree line",
+        .groups = "drop"
+    )
+
+p_psi_validity <- ggplot(psi_validation_plot_data, aes(x = psi_hat_rank, y = psi_true_rank)) +
+    geom_segment(
+        data = psi_line_45,
+        aes(x = x, y = y, xend = xend, yend = yend, linetype = line_type),
+        color = "grey40",
+        linewidth = 0.8,
+        inherit.aes = FALSE,
+        show.legend = TRUE
+    ) +
+    geom_point(color = "grey60", size = 0.75, alpha = 0.50, show.legend = FALSE) +
+    geom_smooth(
+        aes(linetype = "Linear fit"),
+        method = "lm",
+        se = FALSE,
+        color = "black",
+        linewidth = 1.1,
+        show.legend = TRUE
+    ) +
+    facet_grid(gender ~ period) +
+    scale_linetype_manual(
+        name = "Line",
+        breaks = c("45-degree line", "Linear fit"),
+        labels = c("45 degree", "Fitted line"),
+        values = c(
+            "45-degree line" = "dashed",
+            "Linear fit" = "solid"
+        )
+    ) +
+    labs(
+        x = "Recovered firm premium (rank-normalized AKM psi_hat)",
+        y = "True simulated firm premium (rank-normalized psi)",
+        title = "Validity check of AKM-recovered firm premia"
+    ) +
+    coord_equal() +
+    theme_classic(base_size = 14) +
+    theme(
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom"
+    )
+
+ggsave(
+    filename = file.path(output_dir, "validity_check_firm_premia.png"),
+    plot = p_psi_validity,
+    width = 8,
+    height = 6,
+    dpi = 300
+)
+
+#--------------------------
+# 6.1.2 Diagnostic check for recovered lambda
+#--------------------------
+
+p_lambda <- ggplot(lambda_summary, aes(x = period, y = lambda_hat, color = gender, group = gender)) +
+    geom_hline(
+        aes(yintercept = lambda_true, linetype = "True lambda"),
+        color = "grey40",
+        linewidth = 0.8,
+        show.legend = TRUE
+    ) +
+    geom_point(size = 2.2) +
+    geom_line(linewidth = 0.8) +
+    scale_linetype_manual(
+        name = "Line",
+        values = c("True lambda" = "dashed")
+    ) +
+    labs(
+        title = "Diagnostic check of recovered lambda",
+        x = "Period",
+        y = "Outside-offer probability lambda",
+        color = "Gender"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom"
+    )
+
+ggsave(
+    filename = file.path(output_dir, "validity_check_lambda.png"),
+    plot = p_lambda,
+    width = 7,
+    height = 5,
+    dpi = 300
+)
+
+#--------------------------
+# 6.2 wage distribution by gender and period
+#--------------------------
+
+p_wage_dist <- ggplot(wage_long, aes(x = logy, color = gender, fill = gender)) +
+    geom_density(alpha = 0.25, linewidth = 0.8) +
+    facet_wrap(~period) +
+    labs(
+        title = "Distribution of Log Wages by Gender and Period",
+        x = "Log wage",
+        y = "Density",
+        color = "Gender",
+        fill = "Gender"
+    ) +
+    theme_minimal()
+
+ggsave(
+    filename = file.path(output_dir, "distribution_log_wage_gender_period.png"),
+    plot = p_wage_dist,
+    width = 8,
+    height = 5,
+    dpi = 300
+)
+
+# ------------------------------------------------------------
+# 6.3. Firm wage-premia distribution by gender and period
+# ------------------------------------------------------------
+
+p_premia_dist <- ggplot(firm_premia_long, aes(x = psi, color = gender, fill = gender)) +
+    geom_density(alpha = 0.25, linewidth = 0.8) +
+    facet_wrap(~period) +
+    labs(
+        title = "Distribution of Firm Wage Premia by Gender and Period",
+        x = "Firm wage premium (psi)",
+        y = "Density",
+        color = "Gender",
+        fill = "Gender"
+    ) +
+    theme_minimal()
+
+ggsave(
+    filename = file.path(output_dir, "distribution_firm_premia_gender_period.png"),
+    plot = p_premia_dist,
+    width = 8,
+    height = 6,
+    dpi = 300
+)
+
+# ------------------------------------------------------------
+# 6.4. V_true and V_hat distribution by gender and period
+# ------------------------------------------------------------
+
+p_value_dist <- ggplot(value_dist_long, aes(x = value, color = gender, fill = gender)) +
+    geom_density(alpha = 0.25, linewidth = 0.8) +
+    facet_grid(value_type ~ period, scales = "free") +
+    labs(
+        title = "Distribution of True and Recovered Firm Values by Period",
+        x = "Firm value",
+        y = "Density",
+        color = "Gender",
+        fill = "Gender"
+    ) +
+    theme_minimal()
+
+ggsave(
+    filename = file.path(output_dir, "distribution_values_true_hat_gender_period.png"),
+    plot = p_value_dist,
+    width = 9,
+    height = 6,
+    dpi = 300
+)
+
+premia_summary_table <- firm_premia_long %>%
+    group_by(gender, period) %>%
+    summarise(
+        n_firms = n(),
+        mean = mean(psi, na.rm = TRUE),
+        sd = sd(psi, na.rm = TRUE),
+        p10 = quantile(psi, 0.10, na.rm = TRUE),
+        p50 = quantile(psi, 0.50, na.rm = TRUE),
+        p90 = quantile(psi, 0.90, na.rm = TRUE),
+        .groups = "drop"
+    )
+
+print(premia_summary_table)
+
+
+modelsummary::datasummary_df(
+    premia_summary_table,
+    output = file.path(output_dir, "premia_summary_statistics.tex"),
+    title = "Firm Premia Summary Statistics by Gender and Period"
+)
+
+# Check exported files
+list.files(output_dir)
+
+#--------------------------
+# 6.5 Test for compensating differentials
+#--------------------------
+
+comparison_cd <- comparison %>%
+    transmute(
+        firm_id,
+        gender,
+        period,
+        hat = V_hat,
+        psi = psi_hat
+    ) %>%
+    filter(!is.na(hat), !is.na(psi))
+
+require_rows(comparison_cd, min_rows = 2, label = "compensating-differentials plot data")
+
+print(summary(lm(psi ~ hat, data = comparison_cd)))
+
+p2 <- ggplot(comparison_cd, aes(x = hat, y = psi)) +
+    geom_point(color = "grey60", size = 1.1, alpha = 0.55) +
+    geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 1.1) +
+    facet_grid(gender ~ period) +
+    labs(
+        x = "Recovered firm value (V_hat)",
+        y = "Firm wage premium (psi)",
+        title = "Compensating differentials"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5))
+
+compensating_differentials_path <- file.path(output_dir, "compensating_differentials.png")
+ggsave(compensating_differentials_path, plot = p2, width = 8, height = 6, dpi = 300)
+print(paste0("Saved: ", normalizePath(compensating_differentials_path, mustWork = FALSE)))
+
+```
