@@ -35,6 +35,8 @@ output_dir <- file.path(project_dir, "results/estimation")
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
 period_levels <- c("pre", "post")
+correlation_period_levels <- c("full", period_levels)
+all_years <- 2018:2022
 pre_years <- c(2018, 2019)
 post_years <- c(2021, 2022)
 
@@ -87,6 +89,11 @@ rank_to_normal_score <- function(x) {
 period_from_year <- function(year) {
     out <- ifelse(year %in% pre_years, "pre", ifelse(year %in% post_years, "post", NA_character_))
     factor(out, levels = period_levels)
+}
+
+full_period_from_year <- function(year) {
+    out <- ifelse(year %in% all_years, "full", NA_character_)
+    factor(out, levels = correlation_period_levels)
 }
 
 normalize_female <- function(x) {
@@ -181,7 +188,7 @@ spell_month_raw <- read_parquet_data("spell_month")
 worker_month_raw <- read_parquet_data("worker_month")
 workers_pairs_raw <- read_parquet_data("workers_pairs")
 
-standardize_worker_year <- function(data) {
+standardize_worker_year <- function(data, years_keep = c(pre_years, post_years), period_fun = period_from_year) {
     worker <- first_existing(data, c("worker_id", "id_worker", "wid", "person_id", "nninouv", "i"), label = "worker id")
     firm <- first_existing(data, c("firm_id", "id_firm", "fid", "siret", "sir", "j"), label = "firm id")
     year <- first_existing(data, c("year", "annee"), label = "year")
@@ -205,16 +212,21 @@ standardize_worker_year <- function(data) {
         out <- out %>% mutate(logy = log(pmax(logy, 1e-8)))
     }
 
-    out %>%
-        filter(year %in% c(pre_years, post_years), !is.na(worker_id), !is.na(firm_id), !is.na(logy)) %>%
+    out <- out %>%
+        filter(year %in% years_keep, !is.na(worker_id), !is.na(firm_id), !is.na(logy)) %>%
         mutate(
-            period = period_from_year(year),
+            period = period_fun(year),
             post = as.integer(period == "post"),
             gender = ifelse(female == 1, "Female", "Male")
-        )
+        ) %>%
+        filter(!is.na(period))
+
+    out
 }
 
-standardize_worker_pairs <- function(data, worker_gender_lookup = NULL) {
+standardize_worker_pairs <- function(data, worker_gender_lookup = NULL,
+                                     years_keep = c(pre_years, post_years),
+                                     period_fun = period_from_year) {
     worker <- first_existing(data, c("worker_id", "id_worker", "wid", "person_id", "nninouv", "i"), label = "worker id")
     female <- first_existing(data, c("female", "woman", "sex_female", "gender_female", "sx"), required = FALSE)
     year1 <- first_existing(data, c("year1", "year_origin", "year_t", "year", "annee1"), required = FALSE)
@@ -269,11 +281,11 @@ standardize_worker_pairs <- function(data, worker_gender_lookup = NULL) {
         mutate(
             ee = ifelse(is.na(ee), as.integer(employed1 == 1 & employed2 == 1 & !is.na(index1) & !is.na(index2) & index1 != index2), ee),
             ene = ifelse(is.na(ene), 0L, ene),
-            period = period_from_year(year1),
+            period = period_fun(year1),
             post = as.integer(period == "post"),
             gender = ifelse(female == 1, "Female", "Male")
         ) %>%
-        filter(!is.na(period))
+        filter(year1 %in% years_keep, !is.na(period))
 
     if (all(is.na(out$female))) {
         if (is.null(worker_gender_lookup)) {
@@ -294,7 +306,29 @@ worker_gender_lookup <- wage_long %>%
 monthly_pairs <- standardize_worker_pairs(workers_pairs_raw, worker_gender_lookup)
 monthly_pairs <- as.data.table(monthly_pairs)
 
-firm_levels <- sort(unique(c(wage_long$firm_id, monthly_pairs$index1, monthly_pairs$index2)))
+wage_long_full <- standardize_worker_year(
+    worker_year_raw,
+    years_keep = all_years,
+    period_fun = full_period_from_year
+)
+worker_gender_lookup_full <- wage_long_full %>%
+    distinct(worker_id, female)
+monthly_pairs_full <- standardize_worker_pairs(
+    workers_pairs_raw,
+    worker_gender_lookup_full,
+    years_keep = all_years,
+    period_fun = full_period_from_year
+)
+monthly_pairs_full <- as.data.table(monthly_pairs_full)
+
+firm_levels <- sort(unique(c(
+    wage_long$firm_id,
+    monthly_pairs$index1,
+    monthly_pairs$index2,
+    wage_long_full$firm_id,
+    monthly_pairs_full$index1,
+    monthly_pairs_full$index2
+)))
 firm_levels <- firm_levels[!is.na(firm_levels)]
 firm_map <- data.frame(firm_id = firm_levels, firm_node = seq_along(firm_levels))
 n_firms <- nrow(firm_map)
@@ -305,6 +339,15 @@ monthly_pairs <- monthly_pairs %>%
     rename(origin_node = firm_node) %>%
     left_join(firm_map, by = c("index2" = "firm_id")) %>%
     rename(dest_node = firm_node)
+monthly_pairs <- as.data.table(monthly_pairs)
+
+wage_long_full <- wage_long_full %>% left_join(firm_map, by = "firm_id")
+monthly_pairs_full <- monthly_pairs_full %>%
+    left_join(firm_map, by = c("index1" = "firm_id")) %>%
+    rename(origin_node = firm_node) %>%
+    left_join(firm_map, by = c("index2" = "firm_id")) %>%
+    rename(dest_node = firm_node)
+monthly_pairs_full <- as.data.table(monthly_pairs_full)
 
 # =========================
 # 2. AKM firm premia on yearly data
@@ -351,7 +394,15 @@ akm_firm_premia_long <- wage_long %>%
     left_join(firm_map, by = "firm_node") %>%
     mutate(gender = ifelse(female == 1, "Female", "Male"))
 
+akm_firm_premia_full <- wage_long_full %>%
+    group_by(period, female) %>%
+    group_modify(~ estimate_akm_firm_premia(.x)) %>%
+    ungroup() %>%
+    left_join(firm_map, by = "firm_node") %>%
+    mutate(gender = ifelse(female == 1, "Female", "Male"))
+
 write.csv(akm_firm_premia_long, file.path(output_dir, "akm_firm_premia_gender_period.csv"), row.names = FALSE)
+write.csv(akm_firm_premia_full, file.path(output_dir, "akm_firm_premia_full_period.csv"), row.names = FALSE)
 
 # =========================
 # 3. Revealed-preference recovery on monthly data
@@ -603,7 +654,7 @@ recover_sorkin_full_model <- function(data, period_keep, gender_keep) {
         fallback <- recover_stable_monthly_rank(inputs)
         return(data.frame(
             firm_node = inputs$firm_nodes,
-            period = factor(period_keep, levels = period_levels),
+            period = factor(period_keep, levels = correlation_period_levels),
             female = gender_keep,
             lambda_hat = NA_real_,
             offer_hat = fallback$offer_hat,
@@ -612,7 +663,7 @@ recover_sorkin_full_model <- function(data, period_keep, gender_keep) {
     }
     data.frame(
         firm_node = inputs$firm_nodes,
-        period = factor(period_keep, levels = period_levels),
+        period = factor(period_keep, levels = correlation_period_levels),
         female = gender_keep,
         lambda_hat = fit$lambda,
         offer_hat = fit$f,
@@ -629,9 +680,104 @@ rank_all_long <- bind_rows(
     left_join(firm_map, by = "firm_node") %>%
     mutate(gender = ifelse(female == 1, "Female", "Male"))
 
+rank_full_long <- bind_rows(
+    recover_sorkin_full_model(monthly_pairs_full, "full", 0),
+    recover_sorkin_full_model(monthly_pairs_full, "full", 1)
+) %>%
+    left_join(firm_map, by = "firm_node") %>%
+    mutate(gender = ifelse(female == 1, "Female", "Male"))
+
 lambda_summary <- rank_all_long %>%
     distinct(period, female, gender, lambda_hat)
 write.csv(lambda_summary, file.path(output_dir, "sorkin_lambda_estimates.csv"), row.names = FALSE)
+
+lambda_summary_full <- rank_full_long %>%
+    distinct(period, female, gender, lambda_hat)
+write.csv(lambda_summary_full, file.path(output_dir, "sorkin_lambda_estimates_full_period.csv"), row.names = FALSE)
+
+# =========================
+# 3.1. Gender correlations in firm values, firm premia, and compensating differentials
+# =========================
+
+safe_cor <- function(x, y) {
+    ok <- complete.cases(x, y)
+    if (sum(ok) < 2) return(NA_real_)
+    cor(x[ok], y[ok])
+}
+
+rank_for_correlations <- bind_rows(rank_full_long, rank_all_long) %>%
+    mutate(period = as.character(period))
+
+akm_for_correlations <- bind_rows(akm_firm_premia_full, akm_firm_premia_long) %>%
+    mutate(period = as.character(period))
+
+gender_correlation <- function(data, value_col, statistic_label) {
+    wide <- data %>%
+        select(period, firm_node, female, value = all_of(value_col)) %>%
+        mutate(gender_key = ifelse(female == 1, "women", "men")) %>%
+        group_by(period, firm_node, gender_key) %>%
+        summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+        pivot_wider(names_from = gender_key, values_from = value)
+
+    if (!"women" %in% names(wide)) wide$women <- NA_real_
+    if (!"men" %in% names(wide)) wide$men <- NA_real_
+
+    wide %>%
+        group_by(period) %>%
+        summarise(
+            statistic = statistic_label,
+            correlation = safe_cor(women, men),
+            n_firms = sum(complete.cases(women, men)),
+            .groups = "drop"
+        )
+}
+
+firm_value_gender_correlations <- gender_correlation(
+    rank_for_correlations,
+    "V_hat",
+    "Firm value: corr(Women, Men)"
+)
+
+firm_premia_gender_correlations <- gender_correlation(
+    akm_for_correlations,
+    "psi_hat",
+    "Firm premia: corr(Women, Men)"
+)
+
+compensating_differential_correlations <- rank_for_correlations %>%
+    select(period, firm_node, female, V_hat) %>%
+    left_join(
+        akm_for_correlations %>% select(period, firm_node, female, psi_hat),
+        by = c("period", "firm_node", "female")
+    ) %>%
+    group_by(period, female) %>%
+    summarise(
+        statistic = paste0("Compensating differential: corr(V_hat, psi_hat), ", ifelse(first(female) == 1, "Women", "Men")),
+        correlation = safe_cor(V_hat, psi_hat),
+        n_firms = sum(complete.cases(V_hat, psi_hat)),
+        .groups = "drop"
+    ) %>%
+    select(period, statistic, correlation, n_firms)
+
+correlation_summary <- bind_rows(
+    firm_value_gender_correlations,
+    firm_premia_gender_correlations,
+    compensating_differential_correlations
+) %>%
+    mutate(period = factor(period, levels = correlation_period_levels)) %>%
+    arrange(period, statistic)
+
+write.csv(
+    correlation_summary,
+    file.path(output_dir, "gender_period_correlations.csv"),
+    row.names = FALSE
+)
+
+write_simple_latex_table(
+    correlation_summary,
+    file.path(output_dir, "gender_period_correlations.tex"),
+    caption = "Gender Correlations in Firm Values, Firm Premia, and Compensating Differentials"
+)
 
 # =========================
 # 4. Summary tables and regressions

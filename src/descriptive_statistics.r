@@ -73,11 +73,21 @@ format_cell <- function(x, type = "number", digits = 1L, did = FALSE) {
 }
 
 mean_or_na <- function(x) {
-  if (length(x) == 0L || all(is.na(x))) {
+  x <- x[!is.na(x) & is.finite(x)]
+
+  if (length(x) == 0L) {
     return(NA_real_)
   }
 
-  mean(x, na.rm = TRUE)
+  mean(x)
+}
+
+coerce_numeric_column <- function(x) {
+  if (is.numeric(x)) {
+    return(x)
+  }
+
+  suppressWarnings(as.numeric(gsub(",", ".", trimws(as.character(x)), fixed = TRUE)))
 }
 
 write_latex_table <- function(rows, caption, label, first_col, notes, out_path) {
@@ -179,9 +189,55 @@ if (!"female" %in% names(spell_year)) {
 
 spell_year[, female := as.integer(female)]
 
-if (!"hourly_wage" %in% names(spell_year)) {
-  spell_year[, hourly_wage := netnet / nbheur]
+if ("log_hourly_wage" %in% names(spell_year)) {
+  setnames(spell_year, "log_hourly_wage", "log_hourly_wage_input")
 }
+
+numeric_columns <- c(
+  "netnet", "s_brut", "nbheur", "nbheur_nouv", "nb_heur",
+  "spell_days", "debremu", "finremu", "hourly_wage",
+  "log_hourly_wage_input", "age", "xp", "ancsir", "last_t"
+)
+
+for (col in intersect(numeric_columns, names(spell_year))) {
+  spell_year[, (col) := coerce_numeric_column(get(col))]
+}
+
+spell_year[, annual_hours_for_stats := NA_real_]
+for (col in intersect(c("nbheur_nouv", "nbheur", "nb_heur"), names(spell_year))) {
+  spell_year[
+    (is.na(annual_hours_for_stats) |
+      !is.finite(annual_hours_for_stats) |
+      annual_hours_for_stats <= 0) &
+      !is.na(get(col)) &
+      is.finite(get(col)) &
+      get(col) > 0,
+    annual_hours_for_stats := get(col)
+  ]
+}
+
+if (!"hourly_wage" %in% names(spell_year)) {
+  spell_year[, hourly_wage := NA_real_]
+}
+
+spell_year[
+  ,
+  hourly_wage_from_earnings := fifelse(
+    !is.na(netnet) &
+      is.finite(netnet) &
+      netnet > 0 &
+      !is.na(annual_hours_for_stats) &
+      is.finite(annual_hours_for_stats) &
+      annual_hours_for_stats > 0,
+    netnet / annual_hours_for_stats,
+    NA_real_
+  )
+]
+
+spell_year[
+  is.na(hourly_wage) | !is.finite(hourly_wage) | hourly_wage <= 0,
+  hourly_wage := hourly_wage_from_earnings
+]
 
 if (!"last_t" %in% names(spell_year)) {
   spell_year[, last_t := T_months]
@@ -196,8 +252,30 @@ spell_year[
   )
 ]
 
-spell_year[, monthly_hours := nbheur / months_covered]
-spell_year[, log_hourly_wage := log(hourly_wage)]
+spell_year[, monthly_hours := annual_hours_for_stats / months_covered]
+spell_year[
+  ,
+  log_hourly_wage := fifelse(
+    !is.na(hourly_wage) & is.finite(hourly_wage) & hourly_wage > 0,
+    log(hourly_wage),
+    NA_real_
+  )
+]
+
+if ("log_hourly_wage_input" %in% names(spell_year)) {
+  spell_year[
+    (is.na(log_hourly_wage) | !is.finite(log_hourly_wage)) &
+      !is.na(log_hourly_wage_input) &
+      is.finite(log_hourly_wage_input),
+    log_hourly_wage := log_hourly_wage_input
+  ]
+}
+
+drop_columns <- intersect(
+  c("annual_hours_for_stats", "hourly_wage_from_earnings", "log_hourly_wage_input"),
+  names(spell_year)
+)
+spell_year[, (drop_columns) := NULL]
 
 spell_year[
   ,
