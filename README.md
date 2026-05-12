@@ -6,7 +6,8 @@
 - Data generation
 - PageRank function
 - Validity: the key is the correlation between the recovered value and simulated value.  
-  We also include some code for the descriptive analyses and regressions we plan to run with DADS data. 
+We also include some code for the descriptive analyses and regressions we plan to run with DADS data.  
+`simulated_final.Rmd` is the markdowm version of the same code for readability and the results are saved as  `simulation_final.tex`.
 
 # Simulated Data Description
 1. `simulated_data_cache.rds`:  
