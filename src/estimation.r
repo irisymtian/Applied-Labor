@@ -12,7 +12,7 @@ library(ggplot2)
 library(Matrix)
 library(igraph)
 library(arrow)
-library(modelsummary)
+has_modelsummary <- requireNamespace("modelsummary", quietly = TRUE)
 
 set.seed(123)
 
@@ -20,9 +20,18 @@ set.seed(123)
 # 0. Paths and helpers
 # =========================
 
-project_output_dir <- "D:/master/M2/Applied Labor Economics/final/our code"
-data_dir <- file.path(project_output_dir, "data")
-output_dir <- if (dir.exists(project_output_dir)) project_output_dir else getwd()
+script_args <- commandArgs(trailingOnly = FALSE)
+script_file_arg <- "--file="
+script_path <- sub(script_file_arg, "", script_args[startsWith(script_args, script_file_arg)][1])
+project_dir <- if (!is.na(script_path) && nzchar(script_path)) {
+    normalizePath(file.path(dirname(script_path), ".."), mustWork = TRUE)
+} else {
+    normalizePath(getwd(), mustWork = TRUE)
+}
+
+data_dir <- file.path(project_dir, "simulated_data")
+output_dir <- file.path(project_dir, "results/estimation")
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
 period_levels <- c("pre", "post")
 pre_years <- c(2018, 2019)
@@ -219,13 +228,12 @@ standardize_worker_pairs <- function(data, worker_gender_lookup = NULL) {
     en_col <- first_existing(data, c("en", "EN", "emp_to_nonemp"), required = FALSE)
     ne_col <- first_existing(data, c("ne", "NE", "nonemp_to_emp"), required = FALSE)
     ene_col <- first_existing(data, c("ene", "ENE", "is_ene"), required = FALSE)
-    last_t_col <- first_existing(data, c("last_t", "t", "time", "month_index"), required = FALSE)
     female_value <- if (!is.na(female)) {
         if (female == "sx") normalize_sx(data[[female]]) else normalize_female(data[[female]])
     } else {
         rep(NA_integer_, nrow(data))
     }
-    month1_source <- if (!is.na(last_t_col)) data[[last_t_col]] else data[[month1]]
+    month1_source <- data[[month1]]
     month2_source <- if (!is.na(month2)) data[[month2]] else month1_source
     year1_value <- if (!is.na(year1)) as.integer(data[[year1]]) else month_to_year(month1_source)
     month1_value <- month_to_month(month1_source)
@@ -372,26 +380,71 @@ build_sorkin_inputs <- function(data, period_keep, gender_keep) {
     ee_rows <- d %>% filter(ee == 1, !is.na(origin_node), !is.na(dest_node), origin_node != dest_node)
     ene_rows <- d %>% filter(ene == 1, !is.na(origin_node), !is.na(dest_node), origin_node != dest_node)
 
+    active_firms <- sort(unique(c(
+        ee_rows$origin_node,
+        ee_rows$dest_node,
+        ene_rows$origin_node,
+        ene_rows$dest_node
+    )))
+    active_firms <- active_firms[!is.na(active_firms)]
+
+    if (length(active_firms) == 0) {
+        return(list(
+            data = d,
+            ee_rows = ee_rows,
+            ene_rows = ene_rows,
+            M = NULL,
+            g_level = NULL,
+            fo_level = NULL,
+            firm_nodes = integer(),
+            ee_count = 0L,
+            ene_count = 0L
+        ))
+    }
+
+    local_map <- data.frame(
+        firm_node = active_firms,
+        local_node = seq_along(active_firms)
+    )
+
+    ee_rows <- ee_rows %>%
+        left_join(local_map, by = c("origin_node" = "firm_node")) %>%
+        rename(origin_local = local_node) %>%
+        left_join(local_map, by = c("dest_node" = "firm_node")) %>%
+        rename(dest_local = local_node)
+
+    ene_rows <- ene_rows %>%
+        left_join(local_map, by = c("origin_node" = "firm_node")) %>%
+        rename(origin_local = local_node) %>%
+        left_join(local_map, by = c("dest_node" = "firm_node")) %>%
+        rename(dest_local = local_node)
+
+    d_local <- d %>%
+        left_join(local_map, by = c("origin_node" = "firm_node")) %>%
+        rename(origin_local = local_node)
+
     nonemployment_node <- 1L
-    n_nodes <- n_firms + 1L
-    origin <- c(ee_rows$origin_node + 1L, ene_rows$origin_node + 1L, rep(nonemployment_node, nrow(ene_rows)))
-    dest <- c(ee_rows$dest_node + 1L, rep(nonemployment_node, nrow(ene_rows)), ene_rows$dest_node + 1L)
+    n_firms_local <- length(active_firms)
+    n_nodes <- n_firms_local + 1L
+    origin <- c(ee_rows$origin_local + 1L, ene_rows$origin_local + 1L, rep(nonemployment_node, nrow(ene_rows)))
+    dest <- c(ee_rows$dest_local + 1L, rep(nonemployment_node, nrow(ene_rows)), ene_rows$dest_local + 1L)
     M <- build_count_matrix(origin, dest, n_nodes)
 
     g_level <- numeric(n_nodes)
-    g_level <- g_level + tabulate(d$origin_node[!is.na(d$origin_node)] + 1L, nbins = n_nodes)
+    g_level <- g_level + tabulate(d_local$origin_local[!is.na(d_local$origin_local)] + 1L, nbins = n_nodes)
 
     fo_level <- numeric(n_nodes)
-    fo_level <- fo_level + tabulate(ene_rows$dest_node + 1L, nbins = n_nodes)
+    fo_level <- fo_level + tabulate(ene_rows$dest_local + 1L, nbins = n_nodes)
     fo_level[nonemployment_node] <- max(1, sum(fo_level))
 
     list(
-        data = d,
+        data = d_local,
         ee_rows = ee_rows,
         ene_rows = ene_rows,
         M = M,
         g_level = g_level,
         fo_level = fo_level,
+        firm_nodes = active_firms,
         ee_count = nrow(ee_rows),
         ene_count = nrow(ene_rows)
     )
@@ -470,15 +523,16 @@ estimate_lambda_and_ve <- function(M, g_level, fo_level, grid = seq(0.02, 0.50, 
 }
 
 recover_stable_monthly_rank <- function(inputs) {
+    n_firms_local <- length(inputs$firm_nodes)
     transition_rows <- bind_rows(
-        inputs$ee_rows %>% transmute(origin_node, dest_node),
-        inputs$ene_rows %>% transmute(origin_node, dest_node)
+        inputs$ee_rows %>% transmute(origin_node = origin_local, dest_node = dest_local),
+        inputs$ene_rows %>% transmute(origin_node = origin_local, dest_node = dest_local)
     )
     if (nrow(transition_rows) == 0) {
-        return(list(V_hat = rep(NA_real_, n_firms), offer_hat = rep(1 / n_firms, n_firms)))
+        return(list(V_hat = rep(NA_real_, n_firms_local), offer_hat = rep(1 / n_firms_local, n_firms_local)))
     }
-    inflow <- tabulate(transition_rows$dest_node, nbins = n_firms)
-    outflow <- tabulate(transition_rows$origin_node, nbins = n_firms)
+    inflow <- tabulate(transition_rows$dest_node, nbins = n_firms_local)
+    outflow <- tabulate(transition_rows$origin_node, nbins = n_firms_local)
     offer_hat <- pmax(inflow, 1)
     offer_hat <- offer_hat / sum(offer_hat)
     list(
@@ -489,7 +543,7 @@ recover_stable_monthly_rank <- function(inputs) {
 
 recover_sorkin_full_model <- function(data, period_keep, gender_keep) {
     inputs <- build_sorkin_inputs(data, period_keep, gender_keep)
-    if ((inputs$ee_count + inputs$ene_count) == 0) {
+    if ((inputs$ee_count + inputs$ene_count) == 0 || length(inputs$firm_nodes) == 0) {
         return(data.frame(firm_node = integer(), period = character(), female = integer(),
                           lambda_hat = numeric(), offer_hat = numeric(), V_hat = numeric()))
     }
@@ -497,7 +551,7 @@ recover_sorkin_full_model <- function(data, period_keep, gender_keep) {
     if (is.null(fit)) {
         fallback <- recover_stable_monthly_rank(inputs)
         return(data.frame(
-            firm_node = seq_len(n_firms),
+            firm_node = inputs$firm_nodes,
             period = factor(period_keep, levels = period_levels),
             female = gender_keep,
             lambda_hat = NA_real_,
@@ -506,7 +560,7 @@ recover_sorkin_full_model <- function(data, period_keep, gender_keep) {
         ))
     }
     data.frame(
-        firm_node = seq_len(n_firms),
+        firm_node = inputs$firm_nodes,
         period = factor(period_keep, levels = period_levels),
         female = gender_keep,
         lambda_hat = fit$lambda,
@@ -583,18 +637,35 @@ did_regression_extra_rows <- data.frame(
     check.names = FALSE
 )
 
-modelsummary::modelsummary(
-    did_regression_models,
-    output = file.path(output_dir, "did_results_table.tex"),
-    title = "Regression Results",
-    coef_map = c("female" = "female", "post" = "post", "female:post" = "female-post",
-                 "age" = "age", "I(age^2)" = "age2", "I(age^3)" = "age3"),
-    vcov = list(~worker_id, ~worker_id, ~worker_id, ~worker_id),
-    stars = c("+" = 0.1, "*" = 0.05, "**" = 0.01, "***" = 0.001),
-    gof_map = c("nobs", "r.squared", "adj.r.squared", "aic", "bic", "rmse"),
-    add_rows = did_regression_extra_rows,
-    notes = "+ p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001"
-)
+if (has_modelsummary) {
+    modelsummary::modelsummary(
+        did_regression_models,
+        output = file.path(output_dir, "did_results_table.tex"),
+        title = "Regression Results",
+        coef_map = c("female" = "female", "post" = "post", "female:post" = "female-post",
+                     "age" = "age", "I(age^2)" = "age2", "I(age^3)" = "age3"),
+        vcov = list(~worker_id, ~worker_id, ~worker_id, ~worker_id),
+        stars = c("+" = 0.1, "*" = 0.05, "**" = 0.01, "***" = 0.001),
+        gof_map = c("nobs", "r.squared", "adj.r.squared", "aic", "bic", "rmse"),
+        add_rows = did_regression_extra_rows,
+        notes = "+ p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001"
+    )
+} else {
+    did_regression_summary <- bind_rows(lapply(names(did_regression_models), function(model_name) {
+        coefs <- summary(did_regression_models[[model_name]])$coefficients
+        data.frame(
+            model = model_name,
+            term = rownames(coefs),
+            estimate = coefs[, "Estimate"],
+            std_error = coefs[, "Std. Error"],
+            statistic = coefs[, "t value"],
+            p_value = coefs[, "Pr(>|t|)"],
+            row.names = NULL
+        )
+    }))
+    write.csv(did_regression_summary, file.path(output_dir, "did_results_table.csv"), row.names = FALSE)
+    message("Package 'modelsummary' not installed; saved did_results_table.csv instead.")
+}
 
 # =========================
 # 5. Sorkin sorting, opportunities, and preferences
