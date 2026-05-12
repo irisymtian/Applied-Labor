@@ -378,7 +378,37 @@ build_sorkin_inputs <- function(data, period_keep, gender_keep) {
         filter(period == period_keep, female == gender_keep)
 
     ee_rows <- d %>% filter(ee == 1, !is.na(origin_node), !is.na(dest_node), origin_node != dest_node)
-    ene_rows <- d %>% filter(ene == 1, !is.na(origin_node), !is.na(dest_node), origin_node != dest_node)
+    ene_rows_direct <- d %>% filter(ene == 1, !is.na(origin_node), !is.na(dest_node), origin_node != dest_node)
+
+    en_rows <- d %>%
+        filter(en == 1, !is.na(origin_node)) %>%
+        transmute(
+            worker_id,
+            en_time = year1 * 12L + month1,
+            origin_node
+        )
+
+    ne_rows <- d %>%
+        filter(ne == 1, !is.na(dest_node)) %>%
+        transmute(
+            worker_id,
+            ne_time = year1 * 12L + month1,
+            dest_node
+        )
+
+    ene_rows_from_spells <- en_rows %>%
+        inner_join(ne_rows, by = "worker_id", relationship = "many-to-many") %>%
+        filter(ne_time > en_time, origin_node != dest_node) %>%
+        group_by(worker_id, en_time, origin_node) %>%
+        slice_min(ne_time, n = 1, with_ties = FALSE) %>%
+        ungroup() %>%
+        transmute(worker_id, origin_node, dest_node, ene = 1L)
+
+    ene_rows <- bind_rows(
+        ene_rows_direct %>% transmute(worker_id, origin_node, dest_node, ene = 1L),
+        ene_rows_from_spells
+    ) %>%
+        distinct(worker_id, origin_node, dest_node, .keep_all = TRUE)
 
     active_firms <- sort(unique(c(
         ee_rows$origin_node,
@@ -734,7 +764,16 @@ sorkin_preference_opportunity_change <- sorkin_preference_opportunity %>%
     pivot_longer(cols = c(observed_sorting_gap, model_sorting_gap, preference_component,
                           opportunity_component, interaction_component),
                  names_to = "component", values_to = "value") %>%
-    pivot_wider(names_from = period, values_from = value) %>%
+    pivot_wider(names_from = period, values_from = value)
+
+if (!"pre" %in% names(sorkin_preference_opportunity_change)) {
+    sorkin_preference_opportunity_change$pre <- NA_real_
+}
+if (!"post" %in% names(sorkin_preference_opportunity_change)) {
+    sorkin_preference_opportunity_change$post <- NA_real_
+}
+
+sorkin_preference_opportunity_change <- sorkin_preference_opportunity_change %>%
     mutate(change_post_minus_pre = post - pre)
 
 write.csv(sorkin_preference_opportunity, file.path(output_dir, "sorkin_preference_opportunity_by_period.csv"), row.names = FALSE)
