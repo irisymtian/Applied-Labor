@@ -9,6 +9,7 @@
 library(dplyr)
 library(tidyr)
 library(ggplot2)
+library(data.table)
 library(Matrix)
 library(igraph)
 library(arrow)
@@ -291,6 +292,7 @@ wage_long <- standardize_worker_year(worker_year_raw)
 worker_gender_lookup <- wage_long %>%
     distinct(worker_id, female)
 monthly_pairs <- standardize_worker_pairs(workers_pairs_raw, worker_gender_lookup)
+monthly_pairs <- as.data.table(monthly_pairs)
 
 firm_levels <- sort(unique(c(wage_long$firm_id, monthly_pairs$index1, monthly_pairs$index2)))
 firm_levels <- firm_levels[!is.na(firm_levels)]
@@ -356,59 +358,85 @@ write.csv(akm_firm_premia_long, file.path(output_dir, "akm_firm_premia_gender_pe
 # =========================
 
 build_count_matrix <- function(origin, dest, n_nodes) {
-    if (length(origin) == 0) return(matrix(0, nrow = n_nodes, ncol = n_nodes))
-    as.matrix(sparseMatrix(i = dest, j = origin, x = 1, dims = c(n_nodes, n_nodes)))
+    if (length(origin) == 0) {
+        return(sparseMatrix(i = integer(), j = integer(), x = numeric(), dims = c(n_nodes, n_nodes)))
+    }
+    sparseMatrix(i = dest, j = origin, x = 1, dims = c(n_nodes, n_nodes))
 }
 
-recover_exptv_damped <- function(M, damping = 0.85) {
-    diag(M) <- 0
+recover_exptv_damped <- function(M, damping = 0.85, tol = 1e-10, max_iter = 1000) {
     n <- nrow(M)
-    outflow <- colSums(M)
-    A <- matrix(1 / n, nrow = n, ncol = n)
+    outflow <- Matrix::colSums(M)
     positive_outflow <- which(outflow > 0)
-    A[, positive_outflow] <- sweep(M[, positive_outflow, drop = FALSE], 2, outflow[positive_outflow], "/")
-    A <- damping * A + (1 - damping) * matrix(1 / n, nrow = n, ncol = n)
-    eig <- eigen(A)
-    q <- abs(Re(eig$vectors[, which.max(Re(eig$values))]))
+    zero_outflow <- setdiff(seq_len(n), positive_outflow)
+
+    q <- rep(1 / n, n)
+    for (iter in seq_len(max_iter)) {
+        transition_part <- numeric(n)
+        if (length(positive_outflow) > 0L) {
+            transition_part <- as.numeric(
+                M[, positive_outflow, drop = FALSE] %*%
+                    (q[positive_outflow] / outflow[positive_outflow])
+            )
+        }
+
+        zero_outflow_mass <- sum(q[zero_outflow])
+        q_next <- damping * (transition_part + zero_outflow_mass / n) + (1 - damping) / n
+        q_next <- pmax(q_next, 1e-300)
+        q_next <- q_next / sum(q_next)
+
+        if (max(abs(q_next - q), na.rm = TRUE) < tol) {
+            q <- q_next
+            break
+        }
+        q <- q_next
+    }
+
     pmax(q / sum(q), 1e-10)
 }
 
 build_sorkin_inputs <- function(data, period_keep, gender_keep) {
-    d <- data %>%
-        filter(period == period_keep, female == gender_keep)
+    d <- as.data.table(data)[period == period_keep & female == gender_keep]
 
-    ee_rows <- d %>% filter(ee == 1, !is.na(origin_node), !is.na(dest_node), origin_node != dest_node)
-    ene_rows_direct <- d %>% filter(ene == 1, !is.na(origin_node), !is.na(dest_node), origin_node != dest_node)
+    ee_rows <- d[
+        ee == 1L & !is.na(origin_node) & !is.na(dest_node) & origin_node != dest_node,
+        .(worker_id, origin_node, dest_node)
+    ]
 
-    en_rows <- d %>%
-        filter(en == 1, !is.na(origin_node)) %>%
-        transmute(
-            worker_id,
-            en_time = year1 * 12L + month1,
-            origin_node
-        )
+    ene_rows_direct <- d[
+        ene == 1L & !is.na(origin_node) & !is.na(dest_node) & origin_node != dest_node,
+        .(worker_id, origin_node, dest_node)
+    ]
 
-    ne_rows <- d %>%
-        filter(ne == 1, !is.na(dest_node)) %>%
-        transmute(
-            worker_id,
-            ne_time = year1 * 12L + month1,
-            dest_node
-        )
+    en_rows <- d[
+        en == 1L & !is.na(origin_node),
+        .(worker_id, en_time = year1 * 12L + month1, origin_node)
+    ]
 
-    ene_rows_from_spells <- en_rows %>%
-        inner_join(ne_rows, by = "worker_id", relationship = "many-to-many") %>%
-        filter(ne_time > en_time, origin_node != dest_node) %>%
-        group_by(worker_id, en_time, origin_node) %>%
-        slice_min(ne_time, n = 1, with_ties = FALSE) %>%
-        ungroup() %>%
-        transmute(worker_id, origin_node, dest_node, ene = 1L)
+    ne_rows <- d[
+        ne == 1L & !is.na(dest_node),
+        .(worker_id, ne_time = year1 * 12L + month1, dest_node)
+    ]
 
-    ene_rows <- bind_rows(
-        ene_rows_direct %>% transmute(worker_id, origin_node, dest_node, ene = 1L),
-        ene_rows_from_spells
-    ) %>%
-        distinct(worker_id, origin_node, dest_node, .keep_all = TRUE)
+    if (nrow(en_rows) > 0L && nrow(ne_rows) > 0L) {
+        setorder(ne_rows, worker_id, ne_time)
+        ene_rows_from_spells <- ne_rows[
+            en_rows,
+            on = .(worker_id, ne_time > en_time),
+            mult = "first",
+            nomatch = 0L
+        ][
+            origin_node != dest_node,
+            .(worker_id, origin_node, dest_node)
+        ]
+    } else {
+        ene_rows_from_spells <- data.table(worker_id = character(), origin_node = integer(), dest_node = integer())
+    }
+
+    ene_rows <- unique(
+        rbindlist(list(ene_rows_direct, ene_rows_from_spells), use.names = TRUE, fill = TRUE),
+        by = c("worker_id", "origin_node", "dest_node")
+    )
 
     active_firms <- sort(unique(c(
         ee_rows$origin_node,
@@ -432,26 +460,15 @@ build_sorkin_inputs <- function(data, period_keep, gender_keep) {
         ))
     }
 
-    local_map <- data.frame(
-        firm_node = active_firms,
-        local_node = seq_along(active_firms)
-    )
+    ee_rows[, `:=`(
+        origin_local = match(origin_node, active_firms),
+        dest_local = match(dest_node, active_firms)
+    )]
 
-    ee_rows <- ee_rows %>%
-        left_join(local_map, by = c("origin_node" = "firm_node")) %>%
-        rename(origin_local = local_node) %>%
-        left_join(local_map, by = c("dest_node" = "firm_node")) %>%
-        rename(dest_local = local_node)
-
-    ene_rows <- ene_rows %>%
-        left_join(local_map, by = c("origin_node" = "firm_node")) %>%
-        rename(origin_local = local_node) %>%
-        left_join(local_map, by = c("dest_node" = "firm_node")) %>%
-        rename(dest_local = local_node)
-
-    d_local <- d %>%
-        left_join(local_map, by = c("origin_node" = "firm_node")) %>%
-        rename(origin_local = local_node)
+    ene_rows[, `:=`(
+        origin_local = match(origin_node, active_firms),
+        dest_local = match(dest_node, active_firms)
+    )]
 
     nonemployment_node <- 1L
     n_firms_local <- length(active_firms)
@@ -461,14 +478,15 @@ build_sorkin_inputs <- function(data, period_keep, gender_keep) {
     M <- build_count_matrix(origin, dest, n_nodes)
 
     g_level <- numeric(n_nodes)
-    g_level <- g_level + tabulate(d_local$origin_local[!is.na(d_local$origin_local)] + 1L, nbins = n_nodes)
+    origin_local_all <- match(d$origin_node, active_firms)
+    g_level <- g_level + tabulate(origin_local_all[!is.na(origin_local_all)] + 1L, nbins = n_nodes)
 
     fo_level <- numeric(n_nodes)
     fo_level <- fo_level + tabulate(ene_rows$dest_local + 1L, nbins = n_nodes)
     fo_level[nonemployment_node] <- max(1, sum(fo_level))
 
     list(
-        data = d_local,
+        data = d,
         ee_rows = ee_rows,
         ene_rows = ene_rows,
         M = M,
@@ -554,9 +572,12 @@ estimate_lambda_and_ve <- function(M, g_level, fo_level, grid = seq(0.02, 0.50, 
 
 recover_stable_monthly_rank <- function(inputs) {
     n_firms_local <- length(inputs$firm_nodes)
-    transition_rows <- bind_rows(
-        inputs$ee_rows %>% transmute(origin_node = origin_local, dest_node = dest_local),
-        inputs$ene_rows %>% transmute(origin_node = origin_local, dest_node = dest_local)
+    transition_rows <- rbindlist(
+        list(
+            inputs$ee_rows[, .(origin_node = origin_local, dest_node = dest_local)],
+            inputs$ene_rows[, .(origin_node = origin_local, dest_node = dest_local)]
+        ),
+        use.names = TRUE
     )
     if (nrow(transition_rows) == 0) {
         return(list(V_hat = rep(NA_real_, n_firms_local), offer_hat = rep(1 / n_firms_local, n_firms_local)))
