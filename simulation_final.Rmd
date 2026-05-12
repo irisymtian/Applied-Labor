@@ -27,7 +27,7 @@ our assumptions:
 2.5. female further sort out to firms with lower wage premium  
 
 # 0. Start
-```{r setup, include=FALSE}
+```{r setup, results='hide'}
 library(dplyr)
 library(tidyr)
 library(ggplot2)
@@ -72,9 +72,8 @@ if (cache_is_current) {
 }
 ```
 
-# 1. Basic parameters
-
-```{r}
+# 1. Basic Parameters
+```{r parameters, echo=TRUE}
 years <- c(2018, 2019, 2021, 2022)
 pre_years <- c(2018, 2019)
 post_years <- c(2021, 2022)
@@ -108,22 +107,26 @@ if (!cache_is_current) {
     psi_covid_shock <- scale(rnorm(n_firms))[, 1] * 0.08
     # 3. women more likely to receive lower wage premium within same firm
     female_penalty <- rnorm(n_firms, mean = -0.12, sd = 0.04)
-    print(paste0("mean of female_penalty:", mean(female_penalty)))
-    print(paste0("proportion of women receiving higher wage premium:", mean(female_penalty > 0)))
 
     # Non-wage factors:
     # 1. firm non-wage amenity base: higher = better non-wage value
     amenity_base <- scale(rnorm(n_firms))[, 1]
     # 2. Covid shock on non-wage factors (mostly improve as WFH is more common)
     amenity_covid_shock <- rnorm(n_firms, mean = 0.25, sd = 0.25)
-    print(paste0("mean of amenity_covid_shock:", mean(amenity_covid_shock)))
-    print(paste0("proportion of improved amenity:", mean(amenity_covid_shock > 0)))
+    
+    print(paste0("mean of female_penalty:", mean(female_penalty)))
+    print(paste0("proportion of women receiving higher wage premium:",
+                 mean(female_penalty > 0)))
+    print(paste0("mean of amenity_covid_shock:",
+                 mean(amenity_covid_shock)))
+    print(paste0("proportion of improved amenity:",
+                 mean(amenity_covid_shock > 0)))
 }
 ```
 
 # 2. Simulation
 
-```{r}
+```{r Simulation, echo=TRUE}
 if (cache_is_current) {
     # The simulation is large.
     # Reuse it unless you do not have simulated_data_cache.rds or change the file name above.
@@ -226,7 +229,7 @@ if (cache_is_current) {
             offer_firm[same_firm] <- sample(1:n_firms, size = length(same_firm), replace = TRUE, prob = offer_prob)
             same_firm <- which(offer_firm == current_firm)
         }
-        # EE -- Direct employer-to-employer move：
+        # EE -- Direct employer-to-employer move:
         # workers compare utility current vs utility offer: U = common firm value + iid shock
         V_current <- ifelse(
             female == 1,
@@ -249,7 +252,7 @@ if (cache_is_current) {
         # revealed preferences
         move <- ifelse(gets_offer == 1 & U_offer > U_current, 1, 0)
 
-        # ENE -- Indirect employer change through nonemployment：
+        # ENE -- Indirect employer change through nonemployment:
 
         # Lower-valued firms have higher separation risk
         ene_prob <- plogis(qlogis(lambda_ene_base) - 0.35 * V_current)
@@ -1006,7 +1009,7 @@ recover_sorkin_full_model <- function(data, period_keep, gender_keep) {
 ```
 
 # 3. revealed-preference ranking function
-```{r}
+```{r function, echo=TRUE}
 # Public wrapper choosing which revealed-preference ranking to estimate:
 # EE-only, stable full-flow, or full Sorkin-style EE+ENE.
 estimate_rank <- function(data, period_keep, gender_keep = NULL, method_keep = "ee") {
@@ -1075,7 +1078,7 @@ estimate_rank <- function(data, period_keep, gender_keep = NULL, method_keep = "
 ```
 
 # 5. Estimation
-```{r}
+```{r estimation, echo=TRUE}
 #--------------------------
 # 5.0 data preparation & summary
 #--------------------------
@@ -1268,17 +1271,17 @@ write_simple_latex_table(
 
 data_summary_by_year_gender_neat <- data_summary_by_year_gender %>%
     transmute(
-        year,
+        year = as.character(as.integer(year)),
         gender,
-        workers = num_workers,
-        firms = num_firms,
-        EE = num_ee,
-        ENE = num_ene,
-        `EE rate` = ee_rate,
-        `ENE rate` = ene_rate,
-        `Mean log wage` = mean_log_wage,
-        `Mean AKM psi` = mean_akm_psi,
-        `Mean true psi` = mean_true_psi
+        workers = as.character(as.integer(num_workers)),
+        firms = as.character(as.integer(num_firms)),
+        EE = as.character(as.integer(num_ee)),
+        ENE = as.character(as.integer(num_ene)),
+        `EE rate` = sprintf("%.3f", ee_rate),
+        `ENE rate` = sprintf("%.3f", ene_rate),
+        `Mean log wage` = sprintf("%.3f", mean_log_wage),
+        `Mean AKM psi` = sprintf("%.3f", mean_akm_psi),
+        `Mean true psi` = sprintf("%.3f", mean_true_psi)
     )
 
 write_simple_latex_table(
@@ -1969,8 +1972,7 @@ print(V_true_correlations)
 ```
 
 # 6. Visualization (for both true simulated data and estimated data)
-
-```{r}
+```{r visualization, echo=TRUE}
 #--------------------------
 # 6.0 data preparation
 #--------------------------
@@ -2037,7 +2039,7 @@ require_rows(
     label = "comparison data for validity plots"
 )
 
-# sanity check：
+# sanity check:
 # 1.how many firms in each gender-period?
 print(table(comparison$gender, comparison$period))
 # 2. any missing value especially in V_hat?

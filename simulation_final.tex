@@ -150,7 +150,126 @@ time but to different extents:\\
 
 \section{0. Start}\label{start}
 
-\section{1. Basic parameters}\label{basic-parameters}
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{library}\NormalTok{(dplyr)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## 
+## 载入程序包：'dplyr'
+\end{verbatim}
+
+\begin{verbatim}
+## The following objects are masked from 'package:stats':
+## 
+##     filter, lag
+\end{verbatim}
+
+\begin{verbatim}
+## The following objects are masked from 'package:base':
+## 
+##     intersect, setdiff, setequal, union
+\end{verbatim}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{library}\NormalTok{(tidyr)}
+\FunctionTok{library}\NormalTok{(ggplot2)}
+\FunctionTok{library}\NormalTok{(Matrix)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## 
+## 载入程序包：'Matrix'
+\end{verbatim}
+
+\begin{verbatim}
+## The following objects are masked from 'package:tidyr':
+## 
+##     expand, pack, unpack
+\end{verbatim}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{library}\NormalTok{(igraph)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## 
+## 载入程序包：'igraph'
+\end{verbatim}
+
+\begin{verbatim}
+## The following object is masked from 'package:tidyr':
+## 
+##     crossing
+\end{verbatim}
+
+\begin{verbatim}
+## The following objects are masked from 'package:dplyr':
+## 
+##     as_data_frame, groups, union
+\end{verbatim}
+
+\begin{verbatim}
+## The following objects are masked from 'package:stats':
+## 
+##     decompose, spectrum
+\end{verbatim}
+
+\begin{verbatim}
+## The following object is masked from 'package:base':
+## 
+##     union
+\end{verbatim}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{library}\NormalTok{(modelsummary)}
+
+\FunctionTok{set.seed}\NormalTok{(}\DecValTok{123}\NormalTok{)}
+
+\CommentTok{\# Save simulated data to the project folder to avoid re{-}running every time}
+\NormalTok{project\_output\_dir }\OtherTok{\textless{}{-}} \StringTok{"D:/master/M2/Applied Labor Economics/final/our code/simulation\_rmd"}
+\NormalTok{script\_path }\OtherTok{\textless{}{-}} \FunctionTok{tryCatch}\NormalTok{(}\FunctionTok{normalizePath}\NormalTok{(}\FunctionTok{sys.frame}\NormalTok{(}\DecValTok{1}\NormalTok{)}\SpecialCharTok{$}\NormalTok{ofile), }\AttributeTok{error =} \ControlFlowTok{function}\NormalTok{(e) }\ConstantTok{NA\_character\_}\NormalTok{)}
+\NormalTok{output\_dir }\OtherTok{\textless{}{-}} \ControlFlowTok{if}\NormalTok{ (}\FunctionTok{dir.exists}\NormalTok{(project\_output\_dir)) \{}
+\NormalTok{    project\_output\_dir}
+\NormalTok{\} }\ControlFlowTok{else} \ControlFlowTok{if}\NormalTok{ (}\SpecialCharTok{!}\FunctionTok{is.na}\NormalTok{(script\_path)) \{}
+    \FunctionTok{dirname}\NormalTok{(script\_path)}
+\NormalTok{\} }\ControlFlowTok{else}\NormalTok{ \{}
+    \FunctionTok{getwd}\NormalTok{()}
+\NormalTok{\}}
+\NormalTok{simulation\_cache }\OtherTok{\textless{}{-}} \FunctionTok{file.path}\NormalTok{(output\_dir, }\StringTok{"simulated\_data\_cache.rds"}\NormalTok{)}
+\NormalTok{simulation\_cache\_version }\OtherTok{\textless{}{-}} \DecValTok{2}\DataTypeTok{L}
+\NormalTok{force\_resimulate }\OtherTok{\textless{}{-}} \ConstantTok{FALSE}
+
+\NormalTok{cache\_is\_current }\OtherTok{\textless{}{-}} \ConstantTok{FALSE}
+\ControlFlowTok{if}\NormalTok{ (}\SpecialCharTok{!}\NormalTok{force\_resimulate }\SpecialCharTok{\&\&} \FunctionTok{file.exists}\NormalTok{(simulation\_cache)) \{}
+\NormalTok{    cached }\OtherTok{\textless{}{-}} \FunctionTok{readRDS}\NormalTok{(simulation\_cache)}
+\NormalTok{    cache\_is\_current }\OtherTok{\textless{}{-}} \FunctionTok{is.list}\NormalTok{(cached) }\SpecialCharTok{\&\&}
+        \FunctionTok{isTRUE}\NormalTok{(cached}\SpecialCharTok{$}\NormalTok{version }\SpecialCharTok{==}\NormalTok{ simulation\_cache\_version) }\SpecialCharTok{\&\&}
+        \FunctionTok{all}\NormalTok{(}\FunctionTok{c}\NormalTok{(}\StringTok{"df"}\NormalTok{, }\StringTok{"df\_simulated"}\NormalTok{) }\SpecialCharTok{\%in\%} \FunctionTok{names}\NormalTok{(cached))}
+\NormalTok{\}}
+
+\ControlFlowTok{if}\NormalTok{ (cache\_is\_current) \{}
+\NormalTok{    df }\OtherTok{\textless{}{-}}\NormalTok{ cached}\SpecialCharTok{$}\NormalTok{df}
+\NormalTok{    df\_simulated }\OtherTok{\textless{}{-}}\NormalTok{ cached}\SpecialCharTok{$}\NormalTok{df\_simulated}
+\NormalTok{    df }\OtherTok{\textless{}{-}}\NormalTok{ df }\SpecialCharTok{\%\textgreater{}\%}
+        \FunctionTok{mutate}\NormalTok{(}\AttributeTok{period =} \FunctionTok{factor}\NormalTok{(period, }\AttributeTok{levels =} \FunctionTok{c}\NormalTok{(}\StringTok{"pre"}\NormalTok{, }\StringTok{"post"}\NormalTok{)))}
+\NormalTok{    df\_simulated }\OtherTok{\textless{}{-}}\NormalTok{ df\_simulated }\SpecialCharTok{\%\textgreater{}\%}
+        \FunctionTok{mutate}\NormalTok{(}\AttributeTok{period =} \FunctionTok{factor}\NormalTok{(period, }\AttributeTok{levels =} \FunctionTok{c}\NormalTok{(}\StringTok{"pre"}\NormalTok{, }\StringTok{"post"}\NormalTok{)))}
+    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"Loaded cached simulated data from: "}\NormalTok{, simulation\_cache))}
+    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"Cached worker{-}period rows: "}\NormalTok{, }\FunctionTok{nrow}\NormalTok{(df)))}
+    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"Cached firm{-}period rows: "}\NormalTok{, }\FunctionTok{nrow}\NormalTok{(df\_simulated)))}
+\NormalTok{\}}
+\end{Highlighting}
+\end{Shaded}
+
+\section{1. Basic Parameters}\label{basic-parameters}
 
 \begin{Shaded}
 \begin{Highlighting}[]
@@ -187,16 +306,20 @@ time but to different extents:\\
 \NormalTok{    psi\_covid\_shock }\OtherTok{\textless{}{-}} \FunctionTok{scale}\NormalTok{(}\FunctionTok{rnorm}\NormalTok{(n\_firms))[, }\DecValTok{1}\NormalTok{] }\SpecialCharTok{*} \FloatTok{0.08}
     \CommentTok{\# 3. women more likely to receive lower wage premium within same firm}
 \NormalTok{    female\_penalty }\OtherTok{\textless{}{-}} \FunctionTok{rnorm}\NormalTok{(n\_firms, }\AttributeTok{mean =} \SpecialCharTok{{-}}\FloatTok{0.12}\NormalTok{, }\AttributeTok{sd =} \FloatTok{0.04}\NormalTok{)}
-    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"mean of female\_penalty:"}\NormalTok{, }\FunctionTok{mean}\NormalTok{(female\_penalty)))}
-    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"proportion of women receiving higher wage premium:"}\NormalTok{, }\FunctionTok{mean}\NormalTok{(female\_penalty }\SpecialCharTok{\textgreater{}} \DecValTok{0}\NormalTok{)))}
 
     \CommentTok{\# Non{-}wage factors:}
     \CommentTok{\# 1. firm non{-}wage amenity base: higher = better non{-}wage value}
 \NormalTok{    amenity\_base }\OtherTok{\textless{}{-}} \FunctionTok{scale}\NormalTok{(}\FunctionTok{rnorm}\NormalTok{(n\_firms))[, }\DecValTok{1}\NormalTok{]}
     \CommentTok{\# 2. Covid shock on non{-}wage factors (mostly improve as WFH is more common)}
 \NormalTok{    amenity\_covid\_shock }\OtherTok{\textless{}{-}} \FunctionTok{rnorm}\NormalTok{(n\_firms, }\AttributeTok{mean =} \FloatTok{0.25}\NormalTok{, }\AttributeTok{sd =} \FloatTok{0.25}\NormalTok{)}
-    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"mean of amenity\_covid\_shock:"}\NormalTok{, }\FunctionTok{mean}\NormalTok{(amenity\_covid\_shock)))}
-    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"proportion of improved amenity:"}\NormalTok{, }\FunctionTok{mean}\NormalTok{(amenity\_covid\_shock }\SpecialCharTok{\textgreater{}} \DecValTok{0}\NormalTok{)))}
+    
+    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"mean of female\_penalty:"}\NormalTok{, }\FunctionTok{mean}\NormalTok{(female\_penalty)))}
+    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"proportion of women receiving higher wage premium:"}\NormalTok{,}
+                 \FunctionTok{mean}\NormalTok{(female\_penalty }\SpecialCharTok{\textgreater{}} \DecValTok{0}\NormalTok{)))}
+    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"mean of amenity\_covid\_shock:"}\NormalTok{,}
+                 \FunctionTok{mean}\NormalTok{(amenity\_covid\_shock)))}
+    \FunctionTok{print}\NormalTok{(}\FunctionTok{paste0}\NormalTok{(}\StringTok{"proportion of improved amenity:"}\NormalTok{,}
+                 \FunctionTok{mean}\NormalTok{(amenity\_covid\_shock }\SpecialCharTok{\textgreater{}} \DecValTok{0}\NormalTok{)))}
 \NormalTok{\}}
 \end{Highlighting}
 \end{Shaded}
@@ -307,7 +430,7 @@ time but to different extents:\\
 \NormalTok{            offer\_firm[same\_firm] }\OtherTok{\textless{}{-}} \FunctionTok{sample}\NormalTok{(}\DecValTok{1}\SpecialCharTok{:}\NormalTok{n\_firms, }\AttributeTok{size =} \FunctionTok{length}\NormalTok{(same\_firm), }\AttributeTok{replace =} \ConstantTok{TRUE}\NormalTok{, }\AttributeTok{prob =}\NormalTok{ offer\_prob)}
 \NormalTok{            same\_firm }\OtherTok{\textless{}{-}} \FunctionTok{which}\NormalTok{(offer\_firm }\SpecialCharTok{==}\NormalTok{ current\_firm)}
 \NormalTok{        \}}
-        \CommentTok{\# EE {-}{-} Direct employer{-}to{-}employer move：}
+        \CommentTok{\# EE {-}{-} Direct employer{-}to{-}employer move:}
         \CommentTok{\# workers compare utility current vs utility offer: U = common firm value + iid shock}
 \NormalTok{        V\_current }\OtherTok{\textless{}{-}} \FunctionTok{ifelse}\NormalTok{(}
 \NormalTok{            female }\SpecialCharTok{==} \DecValTok{1}\NormalTok{,}
@@ -330,7 +453,7 @@ time but to different extents:\\
         \CommentTok{\# revealed preferences}
 \NormalTok{        move }\OtherTok{\textless{}{-}} \FunctionTok{ifelse}\NormalTok{(gets\_offer }\SpecialCharTok{==} \DecValTok{1} \SpecialCharTok{\&}\NormalTok{ U\_offer }\SpecialCharTok{\textgreater{}}\NormalTok{ U\_current, }\DecValTok{1}\NormalTok{, }\DecValTok{0}\NormalTok{)}
 
-        \CommentTok{\# ENE {-}{-} Indirect employer change through nonemployment：}
+        \CommentTok{\# ENE {-}{-} Indirect employer change through nonemployment:}
 
         \CommentTok{\# Lower{-}valued firms have higher separation risk}
 \NormalTok{        ene\_prob }\OtherTok{\textless{}{-}} \FunctionTok{plogis}\NormalTok{(}\FunctionTok{qlogis}\NormalTok{(lambda\_ene\_base) }\SpecialCharTok{{-}} \FloatTok{0.35} \SpecialCharTok{*}\NormalTok{ V\_current)}
@@ -1385,17 +1508,17 @@ function}\label{revealed-preference-ranking-function}
 
 \NormalTok{data\_summary\_by\_year\_gender\_neat }\OtherTok{\textless{}{-}}\NormalTok{ data\_summary\_by\_year\_gender }\SpecialCharTok{\%\textgreater{}\%}
     \FunctionTok{transmute}\NormalTok{(}
-\NormalTok{        year,}
+        \AttributeTok{year =} \FunctionTok{as.character}\NormalTok{(}\FunctionTok{as.integer}\NormalTok{(year)),}
 \NormalTok{        gender,}
-        \AttributeTok{workers =}\NormalTok{ num\_workers,}
-        \AttributeTok{firms =}\NormalTok{ num\_firms,}
-        \AttributeTok{EE =}\NormalTok{ num\_ee,}
-        \AttributeTok{ENE =}\NormalTok{ num\_ene,}
-        \StringTok{\textasciigrave{}}\AttributeTok{EE rate}\StringTok{\textasciigrave{}} \OtherTok{=}\NormalTok{ ee\_rate,}
-        \StringTok{\textasciigrave{}}\AttributeTok{ENE rate}\StringTok{\textasciigrave{}} \OtherTok{=}\NormalTok{ ene\_rate,}
-        \StringTok{\textasciigrave{}}\AttributeTok{Mean log wage}\StringTok{\textasciigrave{}} \OtherTok{=}\NormalTok{ mean\_log\_wage,}
-        \StringTok{\textasciigrave{}}\AttributeTok{Mean AKM psi}\StringTok{\textasciigrave{}} \OtherTok{=}\NormalTok{ mean\_akm\_psi,}
-        \StringTok{\textasciigrave{}}\AttributeTok{Mean true psi}\StringTok{\textasciigrave{}} \OtherTok{=}\NormalTok{ mean\_true\_psi}
+        \AttributeTok{workers =} \FunctionTok{as.character}\NormalTok{(}\FunctionTok{as.integer}\NormalTok{(num\_workers)),}
+        \AttributeTok{firms =} \FunctionTok{as.character}\NormalTok{(}\FunctionTok{as.integer}\NormalTok{(num\_firms)),}
+        \AttributeTok{EE =} \FunctionTok{as.character}\NormalTok{(}\FunctionTok{as.integer}\NormalTok{(num\_ee)),}
+        \AttributeTok{ENE =} \FunctionTok{as.character}\NormalTok{(}\FunctionTok{as.integer}\NormalTok{(num\_ene)),}
+        \StringTok{\textasciigrave{}}\AttributeTok{EE rate}\StringTok{\textasciigrave{}} \OtherTok{=} \FunctionTok{sprintf}\NormalTok{(}\StringTok{"\%.3f"}\NormalTok{, ee\_rate),}
+        \StringTok{\textasciigrave{}}\AttributeTok{ENE rate}\StringTok{\textasciigrave{}} \OtherTok{=} \FunctionTok{sprintf}\NormalTok{(}\StringTok{"\%.3f"}\NormalTok{, ene\_rate),}
+        \StringTok{\textasciigrave{}}\AttributeTok{Mean log wage}\StringTok{\textasciigrave{}} \OtherTok{=} \FunctionTok{sprintf}\NormalTok{(}\StringTok{"\%.3f"}\NormalTok{, mean\_log\_wage),}
+        \StringTok{\textasciigrave{}}\AttributeTok{Mean AKM psi}\StringTok{\textasciigrave{}} \OtherTok{=} \FunctionTok{sprintf}\NormalTok{(}\StringTok{"\%.3f"}\NormalTok{, mean\_akm\_psi),}
+        \StringTok{\textasciigrave{}}\AttributeTok{Mean true psi}\StringTok{\textasciigrave{}} \OtherTok{=} \FunctionTok{sprintf}\NormalTok{(}\StringTok{"\%.3f"}\NormalTok{, mean\_true\_psi)}
 \NormalTok{    )}
 
 \FunctionTok{write\_simple\_latex\_table}\NormalTok{(}
@@ -2579,7 +2702,7 @@ data)}\label{visualization-for-both-true-simulated-data-and-estimated-data}
     \AttributeTok{label =} \StringTok{"comparison data for validity plots"}
 \NormalTok{)}
 
-\CommentTok{\# sanity check：}
+\CommentTok{\# sanity check:}
 \CommentTok{\# 1.how many firms in each gender{-}period?}
 \FunctionTok{print}\NormalTok{(}\FunctionTok{table}\NormalTok{(comparison}\SpecialCharTok{$}\NormalTok{gender, comparison}\SpecialCharTok{$}\NormalTok{period))}
 \end{Highlighting}
@@ -3229,24 +3352,25 @@ Male & post & \num{1500.00} & \num{-0.00} & \num{0.09} & \num{-0.10} & \num{-0.0
 ## [14] "simulation_final.log"                          
 ## [15] "simulation_final.Rmd"                          
 ## [16] "simulation_final.tex"                          
-## [17] "sorkin_gender_gap_female_male_prices.csv"      
-## [18] "sorkin_iteration_history_post_female0.csv"     
-## [19] "sorkin_iteration_history_post_female1.csv"     
-## [20] "sorkin_iteration_history_pre_female0.csv"      
-## [21] "sorkin_iteration_history_pre_female1.csv"      
-## [22] "sorkin_lambda_estimates.csv"                   
-## [23] "sorkin_preference_opportunity_by_period.csv"   
-## [24] "sorkin_preference_opportunity_change.csv"      
-## [25] "sorkin_preference_opportunity_table.tex"       
-## [26] "summary_statistics.tex"                        
-## [27] "validity_check.png"                            
-## [28] "validity_check_firm_premia.png"                
-## [29] "validity_check_firm_premia_plot_data.csv"      
-## [30] "validity_check_firm_premia_summary.csv"        
-## [31] "validity_check_lambda.png"                     
-## [32] "validity_check_plot_data.csv"                  
-## [33] "validity_check_sub.png"                        
-## [34] "validity_check_sub_plot_data.csv"
+## [17] "Simulation_results.pdf"                        
+## [18] "sorkin_gender_gap_female_male_prices.csv"      
+## [19] "sorkin_iteration_history_post_female0.csv"     
+## [20] "sorkin_iteration_history_post_female1.csv"     
+## [21] "sorkin_iteration_history_pre_female0.csv"      
+## [22] "sorkin_iteration_history_pre_female1.csv"      
+## [23] "sorkin_lambda_estimates.csv"                   
+## [24] "sorkin_preference_opportunity_by_period.csv"   
+## [25] "sorkin_preference_opportunity_change.csv"      
+## [26] "sorkin_preference_opportunity_table.tex"       
+## [27] "summary_statistics.tex"                        
+## [28] "validity_check.png"                            
+## [29] "validity_check_firm_premia.png"                
+## [30] "validity_check_firm_premia_plot_data.csv"      
+## [31] "validity_check_firm_premia_summary.csv"        
+## [32] "validity_check_lambda.png"                     
+## [33] "validity_check_plot_data.csv"                  
+## [34] "validity_check_sub.png"                        
+## [35] "validity_check_sub_plot_data.csv"
 \end{verbatim}
 
 \begin{Shaded}
