@@ -1409,18 +1409,29 @@ write_role_of_firms_latex_table(
 # 6. Figures
 # =========================
 
+axis_breaks_by <- function(width) {
+    force(width)
+    function(x) {
+        x <- x[is.finite(x)]
+        if (length(x) == 0) return(NULL)
+        seq(floor(min(x) / width) * width, ceiling(max(x) / width) * width, by = width)
+    }
+}
+
 p_wage_dist <- ggplot(wage_long, aes(x = logy, color = gender, fill = gender)) +
     geom_density(alpha = 0.25, linewidth = 0.8) +
     facet_wrap(~period) +
     labs(title = "Distribution of Log Wages by Gender and Period",
-         x = "Log hourly wage", y = "Density", color = "Gender", fill = "Gender") +
+         x = "Log hourly wage", y = "Density (area = 1 by group)", color = "Gender", fill = "Gender") +
     theme_minimal()
 ggsave(file.path(output_dir, "distribution_log_wage_gender_period.png"), p_wage_dist, width = 8, height = 5, dpi = 300)
 
 firm_premia_long <- akm_firm_premia_long %>%
     transmute(firm_node, firm_id, period, gender, psi = psi_hat)
 p_premia_dist <- ggplot(firm_premia_long, aes(x = psi, color = gender, fill = gender)) +
-    geom_density(alpha = 0.25, linewidth = 0.8) +
+    geom_histogram(aes(y = after_stat(density)), binwidth = 0.5,
+                   position = "identity", alpha = 0.35, boundary = 0) +
+    scale_x_continuous(breaks = axis_breaks_by(0.5)) +
     facet_wrap(~period) +
     labs(title = "Distribution of AKM Firm Premia by Gender and Period",
          x = "AKM firm premium", y = "Density", color = "Gender", fill = "Gender") +
