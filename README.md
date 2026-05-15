@@ -1,38 +1,52 @@
 # Applied Labor Project
 
-This repository contains the code used to simulate, describe, and estimate a
-matched employer-employee analysis of gender wage gaps before and after Covid.
+This repository contains the code and exported outputs for a matched
+employer-employee analysis of gender wage gaps before and after Covid.
 
-The empirical logic is:
+Important distinction:
 
-1. build or load DADS-like worker-firm data;
-2. construct yearly and monthly worker panels;
-3. produce descriptive statistics by gender and period;
-4. estimate AKM-style firm premia and Sorkin-style firm values;
-5. study how wages, firm premia, sorting, preferences, and opportunities differ
-   between women and men before and after Covid.
+- `simulated_data/` contains synthetic DADS-like data created for development,
+  testing, and code validation.
+- `results/` contains the actual outputs obtained from the real DADS-Panel-like
+  data used in the report. These are the results to use in the paper.
 
-The main periods are:
+The real raw data are not stored in this repository. The scripts that run on the
+real data point to an external processed-data folder.
+
+## Research Goal
+
+The project studies whether changes after Covid are associated with changes in:
+
+- the gender gap in hourly wages;
+- the gender gap in firm premia;
+- the sorting of women and men across firms;
+- recovered firm values, opportunities, and preferences.
+
+The analysis is descriptive. The Difference-in-Differences specifications are
+used as accounting tools to summarize changes in women-men gaps before and after
+Covid, not as strict causal estimates.
+
+Main periods:
 
 - full period: 2018-2022;
 - pre-Covid: 2018-2019;
 - post-Covid: 2021-2022;
-- 2020 is shown in some descriptive figures but excluded from the main pre/post
-  comparison.
+- 2020 is excluded from the main pre/post comparison.
 
 ## Repository Structure
 
 ```text
 Applied-Labor/
   README.md
-  simulation_final.Rmd
-  simulation_final.tex
   src/
     simulate_dads_data.r
     descriptive_statistics.r
     model_estimation.r
+    estimation_update2.r
     simulation_final.R
     simulation_full_yearly.r
+    simulation_final.Rmd
+    simulation_final.tex
   simulated_data/
     spell_year.parquet
     worker_year.parquet
@@ -42,58 +56,73 @@ Applied-Labor/
     simulated_data_cache.rds
   results/
     tables/
+      table1_labor_market_outcomes.tex
+      table2_employment_transitions.tex
     figures/
+      distribution_log_wage_gender_period.png
+      distribution2_firm_premia_gender_period.png
+      distribution_values_hat_gender_period.png
+      compensating_differentials.png
     estimation/
-  estimation_results/
+      did_results_table.tex
+      role_of_firms_gender_gap.tex
+      gender_period_correlations.tex
+      data_summary_by_year_gender.tex
+      role_table_period_gender_wage.csv
+      sorkin_lambda_estimates.csv
+      sorkin_lambda_estimates_full_period.csv
+      sorkin_preference_opportunity_by_period.csv
+      sorkin_preference_opportunity_change.csv
+      sorkin_preference_opportunity_table.tex
 ```
 
-## Main Data Files
+## Data Structure
 
-The project uses five DADS-like parquet files.
+The project uses five DADS-like datasets.
 
-### `spell_year.parquet`
+### `spell_year`
 
 Stacked yearly job-spell data. One row is one worker-firm-year spell. A worker
 can have several rows in the same year if they changed employer during the year.
-This is the base used for spell-level descriptive statistics.
+This is not the dominant-employer annual base.
 
-### `worker_year.parquet`
+### `worker_year`
 
 Worker-year dominant-employer data. One row is one worker-year. The dominant
-employer is the firm associated with the highest annual net earnings within the
+employer is the firm associated with the highest annual net earnings in that
 worker-year.
 
-### `spell_month.parquet`
+### `spell_month`
 
 Monthly spell data derived from `spell_year`. One row is one employed
 worker-month. Yearly spells are expanded using `debremu` and `finremu`.
 
-### `worker_month.parquet`
+### `worker_month`
 
 Monthly worker panel derived from `spell_month`. One row is one worker-month.
-It includes both employment and non-employment months up to the worker's last
+It includes employment and non-employment months until the worker's last
 observed month.
 
-### `workers_pairs.parquet`
+### `workers_pairs`
 
 Monthly transition data derived from `worker_month`. One row is one worker and
-one pair of consecutive months. It identifies EE, E-to-NE, and NE-to-E
-transitions.
+one pair of consecutive months. It identifies:
 
-## Main Scripts
+- EE: employment-to-employment transition with firm change;
+- E to NE: employment-to-non-employment transition;
+- NE to E: non-employment-to-employment transition.
+
+## Scripts
 
 ### `src/simulate_dads_data.r`
 
-Generates a synthetic DADS-like dataset for 20,000 workers and 1,000 firms over
-2018-2022. It creates the five main parquet files in `simulated_data/`.
+Creates synthetic DADS-like data for 20,000 workers and 1,000 firms over
+2018-2022. The script exports the five parquet files in `simulated_data/`.
 
-Run with:
+This script is useful for testing the full workflow without access to the real
+confidential data.
 
-```r
-source("src/simulate_dads_data.r")
-```
-
-or:
+Run:
 
 ```bash
 Rscript src/simulate_dads_data.r
@@ -101,29 +130,32 @@ Rscript src/simulate_dads_data.r
 
 ### `src/descriptive_statistics.r`
 
-Builds the descriptive tables and the appendix figure on gender wage trends.
+Creates descriptive tables and a descriptive wage-trends figure.
 
-It uses `simulated_data/spell_year.parquet` as input and reconstructs the
-monthly panel needed for mobility statistics. The main outputs are:
+When run locally, the script uses the synthetic files in `simulated_data/`.
+However, the current tables stored in `results/tables/` are the real-data
+versions used in the report.
 
-- `results/tables/descriptive_statistics/table1_labor_market_outcomes.tex`;
-- `results/tables/descriptive_statistics/table2_employment_transitions.tex`;
-- `results/tables/descriptive_statistics/descriptive_statistics_tables.tex`;
-- `results/figures/descriptive_statistics/parallel_trends_log_hourly_wage.png`;
-- `results/figures/descriptive_statistics/parallel_trends_log_hourly_wage.pdf`;
-- `results/figures/descriptive_statistics/parallel_trends_log_hourly_wage.csv`.
+Main outputs:
 
-Important definitions:
+- `results/tables/table1_labor_market_outcomes.tex`;
+- `results/tables/table2_employment_transitions.tex`;
+- a parallel-trends-style wage figure when the script is run in the local
+  workflow.
 
-- Table 1 outcomes are computed at the `spell_year` level.
-- Table 2 mobility statistics are computed from the reconstructed monthly panel.
-- Transition rates are worker-level incidence rates: a worker is counted once if
-  the transition occurs at least once in the period.
+Definitions:
+
+- Table 1 is computed from `spell_year`; outcomes are spell-level statistics.
+- Table 2 is computed from the monthly panel reconstructed from `spell_year`.
+- Transition rates are worker-level incidence rates: a worker is counted once
+  if the transition occurs at least once in the period.
 - The `N workers` row counts workers followed at the beginning of the
   corresponding period, whether or not they have an employment spell in that
   period.
+- `Average NE duration` is the average total number of non-employment months
+  among workers who have at least one non-employment month in the period.
 
-Run with:
+Run:
 
 ```bash
 Rscript src/descriptive_statistics.r
@@ -131,113 +163,151 @@ Rscript src/descriptive_statistics.r
 
 ### `src/model_estimation.r`
 
-Runs the main estimation code. It estimates:
+Main estimation script for the real data. It points to an external processed
+DADS folder and writes outputs to an external results folder.
+
+Near the top of the script:
+
+```r
+data_dir <- file.path("path/to/processed/parquet/files")
+output_dir <- file.path("path/to/export/folder")
+```
+
+Change these paths when running the code on another machine.
+
+The script estimates:
 
 - AKM-style firm premia by gender and period;
-- Difference-in-Differences regressions for log hourly wages and firm premia;
+- descriptive Difference-in-Differences regressions for log hourly wages and
+  firm premia;
 - Sorkin-style firm values and offer probabilities from mobility transitions;
 - preference and opportunity decompositions;
 - correlations between male and female firm values, firm premia, and
   compensating differentials;
 - role-of-firms decomposition tables.
 
-This script currently contains real-data paths near the top:
-
-```r
-data_dir <- "C:/Users/Public/Documents/Yumiao_TIAN/Data/DADS_Panel tous salaries_2022/Processed"
-output_dir <- "C:/Users/Public/Documents/Yumiao_TIAN/Result_Elisee"
-```
-
-Before running it on another machine, update these paths so that `data_dir`
-points to the folder containing the parquet files and `output_dir` points to the
-desired export folder.
-
-Typical outputs include:
-
-- `akm_firm_premia_full_period.csv`;
-- `akm_firm_premia_gender_period.csv`;
-- `did_results_table.tex`;
-- `data_summary_by_year_gender.csv` and `.tex`;
-- `gender_period_correlations.csv` and `.tex`;
-- `sorkin_lambda_estimates.csv`;
-- `sorkin_preference_opportunity_by_period.csv`;
-- `sorkin_preference_opportunity_change.csv`;
-- `sorkin_preference_opportunity_table.tex`;
-- `role_of_firms_gender_gap.tex`;
-- wage, firm-premia, firm-value, and compensating-differential figures.
-
-Run with:
+Run:
 
 ```bash
 Rscript src/model_estimation.r
 ```
 
+### `src/estimation_update2.r`
+
+Local version of the estimation script that uses `simulated_data/` and writes to
+a local output folder. It is useful for testing code changes before applying
+them to the real-data script.
+
 ### `src/simulation_final.R` and `src/simulation_full_yearly.r`
 
-Older simulation and validation scripts. They were used to test the recovery of
-firm values and PageRank-style ranking procedures before adapting the workflow
-to DADS-like files.
+Older simulation and validation scripts used to develop and test the recovery
+of firm values and ranking methods before adapting the workflow to DADS-like
+files.
 
-### `simulation_final.Rmd`
+### `src/simulation_final.Rmd`
 
 Readable R Markdown version of the simulation exercise. The rendered output is
-`simulation_final.tex`.
+`src/simulation_final.tex`.
 
-## Estimation Details
+## Results Folder
 
-### Difference-in-Differences
+The `results/` folder is the folder to use for the report. It contains outputs
+from the real data, not merely simulated examples.
 
-The DiD is used mainly as a descriptive accounting device. The coefficient on
-`Female x Post` summarizes the post-Covid change in the women-men gap relative
-to the pre-Covid period. It should not be interpreted as a strict causal effect
-unless a parallel-trends assumption is accepted.
+### `results/tables/`
 
-Adjusted specifications include worker and year fixed effects, plus sector
-fixed effects at the A38 level and occupation fixed effects at the PCS4 level
-when these variables are available. Controls can include age polynomials,
-experience, firm tenure, and part-time status.
+Contains the descriptive LaTeX tables:
+
+- `table1_labor_market_outcomes.tex`: labor market outcomes and workforce
+  composition by gender and period;
+- `table2_employment_transitions.tex`: employment transitions and mobility by
+  gender and period.
+
+### `results/figures/`
+
+Contains report figures:
+
+- `distribution_log_wage_gender_period.png`: distribution of log hourly wages by
+  gender and period;
+- `distribution2_firm_premia_gender_period.png`: distribution of AKM firm
+  premia by gender and period;
+- `distribution_values_hat_gender_period.png`: distribution of recovered firm
+  values by gender and period;
+- `compensating_differentials.png`: relationship between recovered firm values
+  and AKM firm premia.
+
+### `results/estimation/`
+
+Contains estimation tables and compact exports:
+
+- `did_results_table.tex`: descriptive DiD regressions for wages and firm
+  premia;
+- `role_of_firms_gender_gap.tex`: main role-of-firms decomposition table;
+- `gender_period_correlations.tex`: correlations between male and female firm
+  values, firm premia, and compensating differentials;
+- `data_summary_by_year_gender.tex`: annual summary statistics by gender;
+- `role_table_period_gender_wage.csv`: mean wages by gender and period used in
+  the role-of-firms decomposition;
+- `sorkin_lambda_estimates.csv`: lambda estimates by gender for pre/post
+  periods;
+- `sorkin_lambda_estimates_full_period.csv`: lambda estimates by gender for the
+  full period;
+- `sorkin_preference_opportunity_by_period.csv`: preference/opportunity
+  decomposition by gender and period;
+- `sorkin_preference_opportunity_change.csv`: post-minus-pre change in that
+  decomposition;
+- `sorkin_preference_opportunity_table.tex`: LaTeX table for the
+  preference/opportunity decomposition.
+
+## Methodological Notes
+
+### Descriptive Difference-in-Differences
+
+The DiD specifications are used descriptively. The coefficient on
+`Female x Post` measures the post-Covid change in the women-men gap relative to
+the pre-Covid period, conditional on the included controls and fixed effects.
+
+Adjusted specifications include worker and year fixed effects, sector fixed
+effects at the A38 level, occupation fixed effects at the PCS4 level, and
+time-varying controls when available:
+
+- age, age squared, and age cubed;
+- potential experience and potential experience squared;
+- firm tenure and firm tenure squared;
+- part-time status.
+
+Because worker fixed effects absorb time-invariant worker characteristics, the
+main coefficient of interest is the interaction `Female x Post`.
 
 ### AKM Firm Premia
 
-Firm premia are estimated separately by gender and period. The code normalizes
-firm premia to have a weighted mean of zero within each gender-period cell:
+AKM firm premia are estimated separately by gender and period. The firm premia
+are normalized so that their weighted mean is zero within each gender-period
+cell:
 
 ```text
 sum_j s_jgt psi_jgt = 0
 ```
 
-No particular firm is fixed as the zero-premium reference firm. The
-normalization only fixes the level of the effects and does not affect
-differences across firms or changes in gaps across periods.
+No specific firm is chosen as the zero-premium reference firm. This
+normalization fixes only the level of the firm effects and does not affect
+differences across firms or changes in gender gaps across periods.
+
+The AKM residualization includes worker/job controls and year effects. Sector
+and occupation fixed effects are excluded from the AKM firm-premium estimation
+because they are closely related to firm affiliation and may absorb part of the
+firm component.
 
 ### Sorkin-Style Firm Values
 
-The Sorkin-style part uses monthly mobility transitions to recover firm values
-and offer probabilities. To avoid memory problems with very large firm sets, the
-estimation is designed to focus on firms that are connected through observed
-mobility transitions.
-
-## Main Outputs to Keep
-
-For replication or for rebuilding report tables on another machine, the most
-important exports are:
-
-- `role_of_firms_gender_gap_components.csv`;
-- `role_of_firms_gender_gap_correlations.csv`;
-- `role_table_period_gender_wage.csv`;
-- `akm_firm_premia_full_period.csv`;
-- `akm_firm_premia_gender_period.csv`;
-- `did_results_table.tex`;
-- `gender_period_correlations.csv`;
-- `sorkin_lambda_estimates.csv`;
-- `sorkin_lambda_estimates_full_period.csv`;
-- `sorkin_preference_opportunity_by_period.csv`;
-- `sorkin_preference_opportunity_change.csv`;
-- descriptive tables and figures from `results/tables/` and `results/figures/`.
+The Sorkin-style part uses worker mobility transitions to recover firm values
+and offer probabilities. The algorithm focuses on firms connected through
+observed mobility transitions, because firms without mobility links do not
+provide identifying variation for recovered firm values.
 
 ## R Packages
 
-The scripts use the following main packages:
+Main packages:
 
 - `data.table`;
 - `arrow`;
@@ -247,7 +317,7 @@ The scripts use the following main packages:
 - `Matrix`;
 - `igraph`;
 - `fixest`;
-- `modelsummary` optional, for LaTeX regression tables.
+- `modelsummary` optional, used for LaTeX regression tables.
 
 Install missing packages with:
 
@@ -260,30 +330,32 @@ install.packages(c(
 
 ## Recommended Workflow
 
-For simulated data:
+For local testing with simulated data:
 
 ```bash
 Rscript src/simulate_dads_data.r
 Rscript src/descriptive_statistics.r
+Rscript src/estimation_update2.r
 ```
 
-For real DADS-like data:
+For the real data:
 
-1. make sure the five parquet files exist in the processed data folder;
-2. update `data_dir` and `output_dir` in `src/model_estimation.r`;
+1. make sure the five parquet files exist in the external processed data folder;
+2. update `data_dir` and `output_dir` in `src/model_estimation.r` if needed;
 3. run:
 
 ```bash
 Rscript src/model_estimation.r
 ```
 
-## Notes for the Report
+Then copy or keep the relevant exported tables and figures in `results/`.
 
-- Table 1 is spell-level: wages, hours, part-time, age, experience, and tenure
-  are computed from `spell_year`.
-- Table 2 is worker-level for mobility: transition rates are the share of
-  workers who experience at least one transition of the relevant type.
-- `Average NE duration` is the average total number of non-employment months
-  among workers who experience at least one non-employment month in the period.
-- The parallel-trends figure is descriptive and should be presented as an
-  appendix check, not as a formal validation of a causal DiD design.
+## Report Notes
+
+- Use `results/` for the report outputs.
+- Treat `simulated_data/` as a development and testing input, not as the source
+  of the final reported estimates.
+- The parallel-trends figure is best presented as a descriptive appendix check,
+  not as a formal validation of a causal DiD design.
+- The DiD estimates should be described as conditional changes in gender gaps,
+  not as causal effects of Covid.
