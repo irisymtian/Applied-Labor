@@ -166,18 +166,6 @@ make_summary_row <- function(label, values, type = "number", digits = 1L, diff =
   )
 }
 
-worker_counts_from_spell_year <- function(dt, years_keep) {
-  d <- dt[year %in% years_keep]
-
-  d[
-    ,
-    .(
-      women = uniqueN(nninouv[female == 1L]),
-      men = uniqueN(nninouv[female == 0L])
-    )
-  ]
-}
-
 # =========================================================
 # Load spell_year
 # =========================================================
@@ -288,6 +276,37 @@ spell_year[
 spell_year[, part_time := as.integer(contract_type == "P")]
 
 # =========================================================
+# Worker frame used for common worker counts
+# =========================================================
+worker_frame <- spell_year[
+  ,
+  .(
+    female = first(female),
+    last_t = max(last_t, na.rm = TRUE)
+  ),
+  by = .(worker_id = nninouv)
+]
+
+worker_frame[!is.finite(last_t) | is.na(last_t), last_t := T_months]
+worker_frame[, last_t := pmin(as.integer(last_t), T_months)]
+
+period_workers <- function(years_keep) {
+  worker_frame[last_t >= period_t_min(years_keep)]
+}
+
+period_worker_counts <- function(years_keep) {
+  workers <- period_workers(years_keep)
+
+  workers[
+    ,
+    .(
+      women = sum(female == 1L),
+      men = sum(female == 0L)
+    )
+  ]
+}
+
+# =========================================================
 # Table 1: labor market outcomes from spell_year
 # =========================================================
 labor_metrics <- list(
@@ -355,9 +374,9 @@ labor_rows <- lapply(
   }
 )
 
-full_workers_t1 <- worker_counts_from_spell_year(spell_year, period_defs$full)
-pre_workers_t1 <- worker_counts_from_spell_year(spell_year, period_defs$pre)
-post_workers_t1 <- worker_counts_from_spell_year(spell_year, period_defs$post)
+full_workers_t1 <- period_worker_counts(period_defs$full)
+pre_workers_t1 <- period_worker_counts(period_defs$pre)
+post_workers_t1 <- period_worker_counts(period_defs$post)
 
 labor_rows <- c(
   labor_rows,
@@ -385,13 +404,14 @@ write_latex_table(
   label = "tab:labor_market_outcomes",
   first_col = "Outcome",
   notes = paste(
-    "The unit of observation is a worker-firm-year spell from spell\\_year.",
-    "Hourly wages, hours, age, experience, tenure, and contract status are",
-    "computed directly at the spell level. Part-time spells are identified",
-    "from contract type P, using ce\\_nouv when available and ce otherwise.",
-    "The last column reports the post-COVID minus pre-COVID change in the",
-    "women-men gap. The N row counts workers with at least one spell in the",
-    "corresponding period."
+    "Outcomes are computed from spell\\_year, where the unit of observation",
+    "is a worker-firm-year spell. Hourly wages, hours, age, experience,",
+    "tenure, and contract status are measured at the spell level. Share",
+    "part-time is therefore the share of spells with contract type P, using",
+    "ce\\_nouv when available and ce otherwise; it is not a worker-level",
+    "incidence rate. The N row counts workers followed in the corresponding",
+    "period, using the same worker denominator as Table A2. The last column",
+    "reports the post-COVID minus pre-COVID change in the women-men gap."
   ),
   out_path = table1_path
 )
@@ -418,18 +438,6 @@ spell_month <- spell_month[t >= 1L & t <= T_months]
 
 setorder(spell_month, nninouv, t, -netnet, -nbheur, spell_row_id)
 spell_month <- spell_month[, .SD[1L], by = .(nninouv, t)]
-
-worker_frame <- spell_year[
-  ,
-  .(
-    female = first(female),
-    last_t = max(last_t, na.rm = TRUE)
-  ),
-  by = .(worker_id = nninouv)
-]
-
-worker_frame[!is.finite(last_t) | is.na(last_t), last_t := T_months]
-worker_frame[, last_t := pmin(as.integer(last_t), T_months)]
 
 worker_month <- worker_frame[
   ,
@@ -493,10 +501,6 @@ workers_pairs[
     ne = emp1 == 0L & emp2 == 1L
   )
 ]
-
-period_workers <- function(years_keep) {
-  worker_frame[last_t >= period_t_min(years_keep)]
-}
 
 period_pairs <- function(dt, years_keep) {
   dt[
@@ -648,18 +652,6 @@ average_ne_duration <- function(years_keep) {
   ]
 }
 
-period_worker_counts <- function(years_keep) {
-  workers <- period_workers(years_keep)
-
-  workers[
-    ,
-    .(
-      women = sum(female == 1L),
-      men = sum(female == 0L)
-    )
-  ]
-}
-
 mobility_values <- function(metric_fun) {
   full <- metric_fun(period_defs$full)
   pre <- metric_fun(period_defs$pre)
@@ -751,16 +743,20 @@ write_latex_table(
   first_col = "Transition",
   notes = paste(
     "Mobility statistics are reconstructed from spell\\_year by expanding each",
-    "spell into the months covered by debremu and finremu. Transition rows",
-    "report worker-level incidence rates: the denominator is the number of",
-    "workers followed at least one month in the period, and a worker is",
-    "counted once if the transition occurs at least once. Stay same firm is",
-    "the share of workers with employment in the period and no firm move.",
-    "Stay NE is the share with at least three consecutive non-employment",
-    "months. Mean job spell months is the average number of employed months",
-    "per worker. Average NE duration is computed among workers with at least",
-    "one non-employment month in the period. The last column reports the",
-    "post-COVID minus pre-COVID change in the women-men gap."
+    "spell into the months covered by debremu and finremu and then forming",
+    "consecutive monthly worker pairs. All transition rows are worker-level",
+    "incidence rates: the denominator is the N row, and a worker is counted",
+    "once if the transition occurs at least once in the period. EE is an",
+    "employment-to-employment transition with a firm change; E to NE is an",
+    "employment-to-non-employment transition; NE to E is a non-employment-to-",
+    "employment transition. Stay same firm is the share of followed workers",
+    "with employment in the period and no firm move. Stay NE is the share",
+    "with at least three consecutive non-employment months. Mean job spell",
+    "months is the average number of employed months per followed worker.",
+    "Average NE duration is the average total number of non-employment months",
+    "among workers with at least one non-employment month in the period. The",
+    "last column reports the post-COVID minus pre-COVID change in the",
+    "women-men gap."
   ),
   out_path = table2_path
 )
