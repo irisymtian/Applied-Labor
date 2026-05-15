@@ -1,17 +1,15 @@
 # Applied Labor Project
 
-This repository contains the code and exported outputs for a matched
-employer-employee analysis of gender wage gaps before and after Covid.
+This repository contains the code and exported outputs for the analysis of gender wage gaps before and after Covid.
 
 Important distinction:
 
-- `simulated_data/` contains synthetic DADS-like data created for development,
+- `simulated_data/` contains synthetic DADS-like data simulated for development,
   testing, and code validation.
 - `results/` contains the actual outputs obtained from the real DADS-Panel-like
   data used in the report. These are the results to use in the paper.
 
-The real raw data are not stored in this repository. The scripts that run on the
-real data point to an external processed-data folder.
+The real raw data are not stored in this repository. The scripts point to the simulated data.
 
 ## Research Goal
 
@@ -20,10 +18,9 @@ The project studies whether changes after Covid are associated with changes in:
 - the gender gap in hourly wages;
 - the gender gap in firm premia;
 - the sorting of women and men across firms;
-- recovered firm values, opportunities, and preferences.
+- revealed firm values, access to job opportunities, and preferences over firms.
 
-The analysis is descriptive. The Difference-in-Differences specifications are
-used as accounting tools to summarize changes in women-men gaps before and after
+The Difference-in-Differences specifications are used as accounting tools to summarize changes in women-men gaps before and after
 Covid, not as strict causal estimates.
 
 Main periods:
@@ -31,7 +28,7 @@ Main periods:
 - full period: 2018-2022;
 - pre-Covid: 2018-2019;
 - post-Covid: 2021-2022;
-- 2020 is excluded from the main pre/post comparison.
+- 2020 is excluded from the pre/post comparison.
 
 ## Repository Structure
 
@@ -42,7 +39,6 @@ Applied-Labor/
     simulate_dads_data.r
     descriptive_statistics.r
     model_estimation.r
-    estimation_update2.r
     simulation_final.R
     simulation_full_yearly.r
     simulation_final.Rmd
@@ -84,7 +80,6 @@ The project uses five DADS-like datasets.
 
 Stacked yearly job-spell data. One row is one worker-firm-year spell. A worker
 can have several rows in the same year if they changed employer during the year.
-This is not the dominant-employer annual base.
 
 ### `worker_year`
 
@@ -163,17 +158,21 @@ Rscript src/descriptive_statistics.r
 
 ### `src/model_estimation.r`
 
-Main estimation script for the real data. It points to an external processed
-DADS folder and writes outputs to an external results folder.
+Main estimation script. In the repository version, inputs point to
+`simulated_data/` and outputs point to `results/`, so the script can be run
+locally without external paths.
 
 Near the top of the script:
 
 ```r
-data_dir <- file.path("path/to/processed/parquet/files")
-output_dir <- file.path("path/to/export/folder")
+data_dir <- file.path(project_dir, "simulated_data")
+output_dir <- file.path(project_dir, "results", "estimation")
+figure_dir <- file.path(project_dir, "results", "figures")
 ```
 
-Change these paths when running the code on another machine.
+To run the same code on confidential real data, replace `data_dir` with the
+external folder containing the real parquet files. The report outputs stored in
+`results/` are the real-data outputs.
 
 The script estimates:
 
@@ -191,12 +190,6 @@ Run:
 ```bash
 Rscript src/model_estimation.r
 ```
-
-### `src/estimation_update2.r`
-
-Local version of the estimation script that uses `simulated_data/` and writes to
-a local output folder. It is useful for testing code changes before applying
-them to the real-data script.
 
 ### `src/simulation_final.R` and `src/simulation_full_yearly.r`
 
@@ -341,7 +334,8 @@ Rscript src/estimation_update2.r
 For the real data:
 
 1. make sure the five parquet files exist in the external processed data folder;
-2. update `data_dir` and `output_dir` in `src/model_estimation.r` if needed;
+2. update `data_dir` in `src/model_estimation.r` so that it points to the real
+   processed data folder;
 3. run:
 
 ```bash

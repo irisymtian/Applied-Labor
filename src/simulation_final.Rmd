@@ -37,17 +37,20 @@ library(modelsummary)
 
 set.seed(123)
 
-# Save simulated data to the project folder to avoid re-running every time
-project_output_dir <- "D:/master/M2/Applied Labor Economics/final/our code/simulation_rmd"
-script_path <- tryCatch(normalizePath(sys.frame(1)$ofile), error = function(e) NA_character_)
-output_dir <- if (dir.exists(project_output_dir)) {
-    project_output_dir
-} else if (!is.na(script_path)) {
-    dirname(script_path)
+# Save cache and outputs inside the repository.
+script_args <- commandArgs(trailingOnly = FALSE)
+script_file_arg <- "--file="
+script_path <- sub(script_file_arg, "", script_args[startsWith(script_args, script_file_arg)][1])
+project_dir <- if (!is.na(script_path) && nzchar(script_path)) {
+    normalizePath(file.path(dirname(script_path), ".."), mustWork = TRUE)
 } else {
-    getwd()
+    normalizePath(getwd(), mustWork = TRUE)
 }
-simulation_cache <- file.path(output_dir, "simulated_data_cache.rds")
+cache_dir <- file.path(project_dir, "simulated_data")
+output_dir <- file.path(project_dir, "results", "simulation")
+dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+simulation_cache <- file.path(cache_dir, "simulated_data_cache.rds")
 simulation_cache_version <- 2L
 force_resimulate <- FALSE
 

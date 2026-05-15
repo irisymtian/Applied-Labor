@@ -4,6 +4,19 @@ library(arrow)
 set.seed(123)
 
 # =========================================================
+# Paths
+# =========================================================
+script_args <- commandArgs(trailingOnly = FALSE)
+script_file_arg <- "--file="
+script_path <- sub(script_file_arg, "", script_args[startsWith(script_args, script_file_arg)][1])
+project_dir <- if (!is.na(script_path) && nzchar(script_path)) {
+  normalizePath(file.path(dirname(script_path), ".."), mustWork = TRUE)
+} else {
+  normalizePath(getwd(), mustWork = TRUE)
+}
+data_dir <- file.path(project_dir, "simulated_data")
+
+# =========================================================
 # Parameters
 # =========================================================
 n_workers <- 20000L
@@ -539,12 +552,12 @@ message("workers_pairs rows: ", nrow(workers_pairs))
 # =========================================================
 # 8. Export parquet files
 # =========================================================
-dir.create("simulated_data", showWarnings = FALSE)
+dir.create(data_dir, showWarnings = FALSE, recursive = TRUE)
 
-write_parquet(spell_year, "simulated_data/spell_year.parquet")
-write_parquet(worker_year, "simulated_data/worker_year.parquet")
-write_parquet(spell_month, "simulated_data/spell_month.parquet")
-write_parquet(worker_month, "simulated_data/worker_month.parquet")
-write_parquet(workers_pairs, "simulated_data/workers_pairs.parquet")
+write_parquet(spell_year, file.path(data_dir, "spell_year.parquet"))
+write_parquet(worker_year, file.path(data_dir, "worker_year.parquet"))
+write_parquet(spell_month, file.path(data_dir, "spell_month.parquet"))
+write_parquet(worker_month, file.path(data_dir, "worker_month.parquet"))
+write_parquet(workers_pairs, file.path(data_dir, "workers_pairs.parquet"))
 
-message("Exported parquet files to simulated_data/.")
+message("Exported parquet files to ", data_dir)

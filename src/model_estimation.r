@@ -30,9 +30,11 @@ project_dir <- if (!is.na(script_path) && nzchar(script_path)) {
     normalizePath(getwd(), mustWork = TRUE)
 }
 
-data_dir <- file.path("C:/Users/Public/Documents/Yumiao_TIAN/Data/DADS_Panel tous salariés_2022/Processed")
-output_dir <- file.path("C:/Users/Public/Documents/Yumiao_TIAN/Result_Elisee")
+data_dir <- file.path(project_dir, "simulated_data")
+output_dir <- file.path(project_dir, "results", "estimation")
+figure_dir <- file.path(project_dir, "results", "figures")
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(figure_dir, showWarnings = FALSE, recursive = TRUE)
 
 period_levels <- c("pre", "post")
 correlation_period_levels <- c("full", period_levels)
@@ -1651,7 +1653,7 @@ p_wage_dist <- ggplot(wage_long, aes(x = logy, color = gender, fill = gender)) +
         x = "Log hourly wage", y = "Density (area = 1 by group)", color = "Gender", fill = "Gender"
     ) +
     theme_minimal()
-ggsave(file.path(output_dir, "distribution_log_wage_gender_period.png"), p_wage_dist, width = 8, height = 5, dpi = 300)
+ggsave(file.path(figure_dir, "distribution_log_wage_gender_period.png"), p_wage_dist, width = 8, height = 5, dpi = 300)
 
 firm_premia_long <- akm_firm_premia_long %>%
     transmute(firm_node, firm_id, period, gender, psi = psi_hat)
@@ -1667,7 +1669,7 @@ p_premia_dist <- ggplot(firm_premia_long, aes(x = psi, color = gender, fill = ge
         x = "AKM firm premium", y = "Density", color = "Gender", fill = "Gender"
     ) +
     theme_minimal()
-ggsave(file.path(output_dir, "distribution_firm_premia_gender_period.png"), p_premia_dist, width = 8, height = 5, dpi = 300)
+ggsave(file.path(figure_dir, "distribution2_firm_premia_gender_period.png"), p_premia_dist, width = 8, height = 5, dpi = 300)
 
 value_dist_long <- rank_all_long %>%
     transmute(firm_node, firm_id, period, gender, value = V_hat)
@@ -1679,7 +1681,7 @@ p_value_dist <- ggplot(value_dist_long, aes(x = value, color = gender, fill = ge
         x = "Recovered firm value", y = "Density", color = "Gender", fill = "Gender"
     ) +
     theme_minimal()
-ggsave(file.path(output_dir, "distribution_values_hat_gender_period.png"), p_value_dist, width = 8, height = 5, dpi = 300)
+ggsave(file.path(figure_dir, "distribution_values_hat_gender_period.png"), p_value_dist, width = 8, height = 5, dpi = 300)
 
 compensating_data <- rank_all_long %>%
     left_join(akm_firm_premia_long %>% select(firm_node, period, female, psi_hat),
@@ -1694,6 +1696,7 @@ p_comp <- ggplot(compensating_data, aes(x = V_hat, y = psi_hat, color = gender))
         x = "Recovered firm value", y = "AKM firm premium", color = "Gender"
     ) +
     theme_classic(base_size = 14)
-ggsave(file.path(output_dir, "compensating_differentials.png"), p_comp, width = 8, height = 6, dpi = 300)
+ggsave(file.path(figure_dir, "compensating_differentials.png"), p_comp, width = 8, height = 6, dpi = 300)
 
 print("Finish estimation!")
+

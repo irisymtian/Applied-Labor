@@ -20,8 +20,8 @@ get_project_dir <- function() {
 
 project_dir <- get_project_dir()
 data_dir <- file.path(project_dir, "simulated_data")
-output_dir <- file.path(project_dir, "results/tables/descriptive_statistics")
-figure_dir <- file.path(project_dir, "results/figures/descriptive_statistics")
+output_dir <- file.path(project_dir, "results", "tables")
+figure_dir <- file.path(project_dir, "results", "figures")
 
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(figure_dir, showWarnings = FALSE, recursive = TRUE)
