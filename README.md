@@ -256,16 +256,14 @@ Contains estimation tables and compact exports:
 
 ### Descriptive Difference-in-Differences
 
-The DiD specifications are used descriptively. The coefficient on
-`Female x Post` measures the post-Covid change in the women-men gap relative to
-the pre-Covid period, conditional on the included controls and fixed effects.
+The coefficient on `Female x Post` measures the post-Covid change in the women-men gap relative to the pre-Covid period, conditional on the included controls and fixed effects.
 
 Adjusted specifications include worker and year fixed effects, sector fixed
 effects at the A38 level, occupation fixed effects at the PCS4 level, and
 time-varying controls when available:
 
 - age, age squared, and age cubed;
-- potential experience and potential experience squared;
+- experience and experience squared;
 - firm tenure and firm tenure squared;
 - part-time status.
 
