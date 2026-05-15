@@ -1,0 +1,29 @@
+% Requires: \usepackage{booktabs,graphicx,caption}
+\begin{table}[!htbp]
+\centering
+\caption{Labor Market Outcomes and Workforce Composition}
+\label{tab:labor_market_outcomes}
+\scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}l*{7}{r}@{}}
+\toprule
+Outcome & \shortstack{Full\\2018--22\\Women} & \shortstack{Full\\2018--22\\Men} & \shortstack{Pre-COVID\\2018--19\\Women} & \shortstack{Pre-COVID\\2018--19\\Men} & \shortstack{Post-COVID\\2021--22\\Women} & \shortstack{Post-COVID\\2021--22\\Men} & \shortstack{Diff-in-Diff\\(Women -- Men)}
+\\
+\midrule
+Average hourly wage & 18.30 & 22.85 & 17.25 & 21.25 & 19.36 & 24.44 & -1.07\\
+Average log hourly wage & 2.757 & 2.915 & 2.712 & 2.853 & 2.803 & 2.975 & -0.031\\
+Average monthly hours & 123.0 & 139.1 & 127.7 & 141.8 & 121.3 & 139.1 & -3.7\\
+Share part-time & 28.9\% & 11.7\% & 26.5\% & 11.5\% & 30.5\% & 12.1\% & 3.4 pp\\
+Average age & 42.8 & 42.4 & 41.0 & 40.8 & 44.5 & 43.9 & 0.3\\
+Average experience & 19.4 & 19.3 & 17.7 & 17.8 & 21.0 & 20.8 & 0.3\\
+Average firm tenure & 6.1 & 6.4 & 5.5 & 5.6 & 6.6 & 7.2 & -0.5\\
+N workers & 181,016 & 192,908 & 181,016 & 192,908 & 181,016 & 192,908 & \\
+\bottomrule
+\end{tabular}%
+}
+\caption*{\footnotesize
+\textit{Notes :} Outcomes are computed from spell\_year, where the unit of observation is a worker-firm-year spell. Hourly wages, hours, age, experience, tenure, and contract status are measured at the spell level. Share part-time is therefore the share of spells with contract type P, using ce\_nouv when available and ce otherwise; it is not a worker-level incidence rate. The N row counts workers followed in the corresponding period, using the same worker denominator as Table A2. The last column reports the post-COVID minus pre-COVID change in the women-men gap.\\[0.5em]
+\textit{Source :} Simulated matched employer--employee data.
+}
+\end{table}

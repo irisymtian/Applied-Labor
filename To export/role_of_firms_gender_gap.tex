@@ -1,0 +1,62 @@
+% Requires: \usepackage{booktabs,caption}
+\begin{table}[!htbp]
+\centering
+\caption{The Role of Firms in the Gender Earnings Gap}
+\label{tab:role_firms_gender_gap}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{4}{c}{Men minus women} \\
+\cmidrule(lr){2-5}
+ & $y$ & $\Psi$ & $\alpha_{Rosen}$ & $\Psi + \alpha_{Rosen}$ \\
+\midrule
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel A. Overall}} \\
+Total difference & 0.141 &  &  &  \\
+Men's ``prices'' &  & 0.000 & 0.068 & 0.072 \\
+Women's ``prices'' &  & 0.000 & 0.095 & 0.089 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel B. Pre-period (2018--2019)}} \\
+Total difference & 0.137 &  &  &  \\
+Men's ``prices'' &  & 0.000 & 0.021 & 0.027 \\
+Women's ``prices'' &  & 0.000 & 0.007 & 0.002 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel C. Post-period (2021--2022)}} \\
+Total difference & 0.145 &  &  &  \\
+Men's ``prices'' &  & 0.000 & 0.017 & 0.022 \\
+Women's ``prices'' &  & 0.000 & -0.031 & -0.038 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel D. Diff-in-Diff}} \\
+Total difference & 0.008 &  &  &  \\
+Men's ``prices'' &  & 0.000 & -0.004 & -0.004 \\
+Women's ``prices'' &  & -0.001 & -0.038 & -0.039 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel E. Offer distribution: overall}} \\
+Men's ``prices'' &  & 0.000 & -1.123 & -1.124 \\
+Women's ``prices'' &  & 0.000 & 0.956 & 0.954 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel F. Offer distribution: pre-period (2018--2019)}} \\
+Men's ``prices'' &  & -0.001 & -1.557 & -1.561 \\
+Women's ``prices'' &  & -0.003 & 1.296 & 1.292 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel G. Offer distribution: post-period (2021--2022)}} \\
+Men's ``prices'' &  & 0.006 & -2.303 & -2.290 \\
+Women's ``prices'' &  & 0.000 & 2.451 & 2.447 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel H. Offer distribution: Diff-in-Diff}} \\
+Men's ``prices'' &  & 0.007 & -0.747 & -0.730 \\
+Women's ``prices'' &  & 0.003 & 1.155 & 1.155 \\
+\addlinespace
+\multicolumn{5}{l}{\textit{Panel I. Correlations between men and women}} \\
+ & $V^e$ & $\Psi$ & $\alpha_{Rosen}$ & \\
+Overall & 0.181 & 0.003 & 0.119 & \\
+Pre-period & 0.204 & -0.005 & 0.149 & \\
+Post-period & 0.244 & 0.012 & 0.176 & \\
+\bottomrule
+\end{tabular}
+\caption*{\footnotesize \textit{Notes :} The table reports men-minus-women gaps. 
+Panels A--D use observed employment shares by firm. Panels E--H use recovered offer probabilities. 
+$\Psi$ is the AKM firm premium. $V^e$ is the recovered Sorkin firm value. 
+$\alpha_{Rosen}$ is computed as $V^e - \Psi$. Diff-in-Diff is post-period minus pre-period.}
+\end{table}

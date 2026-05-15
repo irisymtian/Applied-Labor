@@ -1,0 +1,42 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+caption={Regression Results},
+note{}={+ p \num{< 0.1}, * p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+note{ }={+ p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]Q[]Q[]Q[]Q[]Q[]},
+column{2,3,4,5,6,7,8,9}={}{halign=c,},
+column{1}={}{halign=l,},
+hline{14}={1,2,3,4,5,6,7,8,9}{solid, black, 0.05em},
+}                     %% tabularray inner close
+\toprule
+& log(hourly wage) & log(hourly wage)  & log(hourly wage)   & log(hourly wage)    & firm premia & firm premia  & firm premia   & firm premia    \\ \midrule %% TinyTableHeader
+female & \num{-0.137}*** & \num{-0.137}*** & \num{-0.005} & \num{-0.003} & \num{0.000} & \num{-0.000} & \num{-0.011} & \num{-0.012} \\
+& (\num{0.002}) & (\num{0.002}) & (\num{0.015}) & (\num{0.014}) & (\num{0.001}) & (\num{0.001}) & (\num{0.017}) & (\num{0.017}) \\
+post & \num{0.125}*** &  &  &  & \num{-0.000} &  &  &  \\
+& (\num{0.001}) &  &  &  & (\num{0.000}) &  &  &  \\
+female-post & \num{-0.008}*** & \num{-0.008}*** & \num{-0.000} & \num{-0.001} & \num{-0.000} & \num{-0.000} & \num{-0.000} & \num{-0.000} \\
+& (\num{0.001}) & (\num{0.001}) & (\num{0.001}) & (\num{0.001}) & (\num{0.001}) & (\num{0.001}) & (\num{0.001}) & (\num{0.001}) \\
+age &  &  &  & \num{-1.080} &  &  &  & \num{0.519} \\
+&  &  &  & (\num{295.305}) &  &  &  & (\num{80.437}) \\
+age2 &  &  &  & \num{-0.003}*** &  &  &  & \num{-0.000} \\
+&  &  &  & (\num{0.000}) &  &  &  & (\num{0.000}) \\
+age3 &  &  &  & \num{0.000}*** &  &  &  & \num{0.000} \\
+&  &  &  & (\num{0.000}) &  &  &  & (\num{0.000}) \\
+Num.Obs. & \num{1418367} & \num{1418367} & \num{1418367} & \num{1418005} & \num{1418367} & \num{1418367} & \num{1418367} & \num{1418005} \\
+R2 & \num{0.029} & \num{0.031} & \num{0.905} & \num{0.908} & \num{0.000} & \num{0.000} & \num{0.463} & \num{0.463} \\
+R2 Adj. & \num{0.029} & \num{0.031} & \num{0.871} & \num{0.876} & \num{-0.000} & \num{-0.000} & \num{0.270} & \num{0.271} \\
+AIC & \num{2270775.1} & \num{2267137.9} & \num{-277998.8} & \num{-329943.4} & \num{-1179205.9} & \num{-1179203.9} & \num{-1312658.8} & \num{-1312677.6} \\
+BIC & \num{2270823.7} & \num{2267210.9} & \num{4270050.9} & \num{4222815.9} & \num{-1179157.3} & \num{-1179130.9} & \num{3235390.8} & \num{3240081.7} \\
+RMSE & \num{0.54} & \num{0.54} & \num{0.17} & \num{0.17} & \num{0.16} & \num{0.16} & \num{0.12} & \num{0.12} \\
+Std.Errors & by: worker\_id & by: worker\_id & by: worker\_id & by: worker\_id & by: worker\_id & by: worker\_id & by: worker\_id & by: worker\_id \\
+FE: worker &  &  & x & x &  &  & x & x \\
+FE: year &  & x & x & x &  & x & x & x \\
+FE: sector &  &  &  & x &  &  &  & x \\
+FE: occupation &  &  &  & pcs4 &  &  &  & pcs4 \\
+Controls &  &  &  & age, age\textasciicircum{}2, age\textasciicircum{}3, xp, xp\textasciicircum{}2, ancsir, ancsir\textasciicircum{}2, part\_time &  &  &  & age, age\textasciicircum{}2, age\textasciicircum{}3, xp, xp\textasciicircum{}2, ancsir, ancsir\textasciicircum{}2, part\_time \\
+\bottomrule
+\end{talltblr}
+\end{table}

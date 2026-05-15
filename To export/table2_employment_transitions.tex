@@ -1,0 +1,29 @@
+% Requires: \usepackage{booktabs,graphicx,caption}
+\begin{table}[!htbp]
+\centering
+\caption{Employment Transitions and Mobility}
+\label{tab:employment_transitions}
+\scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}l*{7}{r}@{}}
+\toprule
+Transition & \shortstack{Full\\2018--22\\Women} & \shortstack{Full\\2018--22\\Men} & \shortstack{Pre-COVID\\2018--19\\Women} & \shortstack{Pre-COVID\\2018--19\\Men} & \shortstack{Post-COVID\\2021--22\\Women} & \shortstack{Post-COVID\\2021--22\\Men} & \shortstack{Diff-in-Diff\\(Women -- Men)}
+\\
+\midrule
+Stay same firm & 65.5\% & 67.3\% & 81.9\% & 82.6\% & 79.5\% & 80.1\% & 0.2 pp\\
+EE transition & 30.7\% & 28.7\% & 15.1\% & 14.4\% & 14.2\% & 12.5\% & 1.0 pp\\
+E $\to$ NE & 19.9\% & 19.2\% & 10.4\% & 11.0\% & 7.2\% & 6.8\% & 1.0 pp\\
+NE $\to$ E & 16.5\% & 12.7\% & 9.2\% & 6.5\% & 5.9\% & 5.0\% & -1.7 pp\\
+Stay NE & 18.7\% & 16.4\% & 11.5\% & 10.0\% & 12.2\% & 12.5\% & -1.8 pp\\
+Mean job spell months & 55.6 & 55.5 & 22.6 & 22.7 & 21.9 & 21.7 & 0.3\\
+Average NE duration & 18.9 & 22.0 & 9.8 & 10.1 & 14.2 & 15.4 & -1.0\\
+N workers & 181,016 & 192,908 & 181,016 & 192,908 & 181,016 & 192,908 & \\
+\bottomrule
+\end{tabular}%
+}
+\caption*{\footnotesize
+\textit{Notes :} Mobility statistics are reconstructed from spell\_year by expanding each spell into the months covered by debremu and finremu and then forming consecutive monthly worker pairs. All transition rows are worker-level incidence rates: the denominator is the N row, and a worker is counted once if the transition occurs at least once in the period. EE is an employment-to-employment transition with a firm change; E to NE is an employment-to-non-employment transition; NE to E is a non-employment-to- employment transition. Stay same firm is the share of followed workers with employment in the period and no firm move. Stay NE is the share with at least three consecutive non-employment months. Mean job spell months is the average number of employed months per followed worker. Average NE duration is the average total number of non-employment months among workers with at least one non-employment month in the period. The last column reports the post-COVID minus pre-COVID change in the women-men gap.\\[0.5em]
+\textit{Source :} Simulated matched employer--employee data.
+}
+\end{table}
