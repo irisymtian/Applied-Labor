@@ -999,10 +999,13 @@ did_controls_label <- if (length(did_numeric_controls) == 0L) {
     paste(unique(gsub("I\\((.+)\\)", "\\1", did_numeric_controls)), collapse = ", ")
 }
 sector_fe_label <- if ("a38" %in% did_fixed_effects) "x" else ""
-occupation_fe_label <- if (!is.na(occupation_fe)) occupation_fe else ""
+occupation_fe_label <- if (!is.na(occupation_fe)) "x" else ""
 
 did_regression_extra_rows <- data.frame(
-    term = c("Std.Errors", "FE: worker", "FE: year", "FE: sector", "FE: occupation", "Controls"),
+    term = c(
+        "Std.Errors", "FE: worker", "FE: year",
+        "FE: sector (A38)", "FE: occupation (PCS4)", "Controls"
+    ),
     `log(hourly wage)` = c("by: worker_id", "x", "", "", "", ""),
     `log(hourly wage)` = c("by: worker_id", "x", "x", sector_fe_label, occupation_fe_label, did_controls_label),
     `firm premia` = c("by: worker_id", "x", "", "", "", ""),
@@ -1017,13 +1020,21 @@ if (has_modelsummary) {
         title = "Regression Results",
         coef_map = c(
             "female" = "female", "post" = "post", "female:post" = "female-post",
-            "age" = "age", "I(age^2)" = "age2", "I(age^3)" = "age3"
+            "age" = "age", "I(age^2)" = "age2", "I(age^3)" = "age3",
+            "xp" = "experience", "I(xp^2)" = "experience2",
+            "ancsir" = "firm tenure", "I(ancsir^2)" = "firm tenure2",
+            "part_time" = "part-time"
         ),
         vcov = list(~worker_id, ~worker_id, ~worker_id, ~worker_id),
         stars = c("+" = 0.1, "*" = 0.05, "**" = 0.01, "***" = 0.001),
         gof_map = c("nobs", "r.squared", "adj.r.squared", "aic", "bic", "rmse"),
         add_rows = did_regression_extra_rows,
-        notes = "+ p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001"
+        notes = paste(
+            "+ p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001.",
+            "Adjusted specifications include worker and year fixed effects,",
+            "sector fixed effects at the A38 level, and occupation fixed effects",
+            "at the PCS4 level when these variables are available."
+        )
     )
 } else {
     did_regression_summary <- bind_rows(lapply(names(did_regression_models), function(model_name) {

@@ -1,0 +1,13 @@
+"period","statistic","correlation","n_firms"
+"full","Compensating differential: corr(V_hat, psi_hat), Men",-0.0195564045306225,999
+"full","Compensating differential: corr(V_hat, psi_hat), Women",-0.0047428268850673,1000
+"full","Firm premia: corr(Women, Men)",-0.00697905658331586,1000
+"full","Firm value: corr(Women, Men)",-0.125194707361824,999
+"pre","Compensating differential: corr(V_hat, psi_hat), Men",0.0012059595200095,970
+"pre","Compensating differential: corr(V_hat, psi_hat), Women",0.0631328958150411,974
+"pre","Firm premia: corr(Women, Men)",-0.00608344321157555,1000
+"pre","Firm value: corr(Women, Men)",-0.150623396577915,946
+"post","Compensating differential: corr(V_hat, psi_hat), Men",0.00376769582289834,924
+"post","Compensating differential: corr(V_hat, psi_hat), Women",0.0306935227054543,953
+"post","Firm premia: corr(Women, Men)",-0.00451499368879544,1000
+"post","Firm value: corr(Women, Men)",-0.0852778223678327,883

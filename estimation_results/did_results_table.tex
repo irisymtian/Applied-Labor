@@ -1,0 +1,35 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+caption={Regression Results},
+note{}={+ p \num{< 0.1}, * p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+note{ }={+ p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001. Adjusted specifications include worker and year fixed effects, sector fixed effects at the A38 level, and occupation fixed effects at the PCS4 level when these variables are available.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]Q[]},
+hline{2}={1-5}{solid, black, 0.05em},
+hline{6}={1-5}{solid, black, 0.05em},
+hline{1}={1-5}{solid, black, 0.08em},
+hline{18}={1-5}{solid, black, 0.08em},
+column{2-5}={}{halign=c},
+column{1}={}{halign=l},
+}                     %% tabularray inner close
+& log(hourly wage) & log(hourly wage)  & firm premia & firm premia  \\
+post & \num{0.002} &  & \num{0.000} &  \\
+& (\num{0.003}) &  & (\num{0.001}) &  \\
+female-post & \num{0.001} & \num{0.001} & \num{-0.000} & \num{-0.000} \\
+& (\num{0.005}) & (\num{0.005}) & (\num{0.001}) & (\num{0.001}) \\
+Num.Obs. & \num{76746} & \num{76746} & \num{76746} & \num{76746} \\
+R2 & \num{0.259} & \num{0.259} & \num{0.503} & \num{0.503} \\
+R2 Adj. & \num{-0.002} & \num{-0.002} & \num{0.328} & \num{0.328} \\
+AIC & \num{53715.1} & \num{53728.2} & \num{-242770.7} & \num{-242771.2} \\
+BIC & \num{238698.7} & \num{238878.3} & \num{-57787.1} & \num{-57621.1} \\
+RMSE & \num{0.26} & \num{0.26} & \num{0.04} & \num{0.04} \\
+Std.Errors & by: worker\_id & by: worker\_id & by: worker\_id & by: worker\_id \\
+FE: worker & x & x & x & x \\
+FE: year &  & x &  & x \\
+FE: sector (A38) &  & x &  & x \\
+FE: occupation (PCS4) &  & x &  & x \\
+Controls &  & age, age\textasciicircum{}2, age\textasciicircum{}3 &  & age, age\textasciicircum{}2, age\textasciicircum{}3 \\
+\end{talltblr}
+\end{table}

@@ -1,6 +1,8 @@
 library(data.table)
 library(arrow)
 
+has_ggplot2 <- requireNamespace("ggplot2", quietly = TRUE)
+
 # =========================================================
 # Paths
 # =========================================================
@@ -19,8 +21,10 @@ get_project_dir <- function() {
 project_dir <- get_project_dir()
 data_dir <- file.path(project_dir, "simulated_data")
 output_dir <- file.path(project_dir, "results/tables/descriptive_statistics")
+figure_dir <- file.path(project_dir, "results/figures/descriptive_statistics")
 
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(figure_dir, showWarnings = FALSE, recursive = TRUE)
 
 spell_year_path <- file.path(data_dir, "spell_year.parquet")
 if (!file.exists(spell_year_path)) {
@@ -274,6 +278,156 @@ spell_year[
   )
 ]
 spell_year[, part_time := as.integer(contract_type == "P")]
+
+# =========================================================
+# Parallel trends descriptive figure
+# =========================================================
+parallel_gender_trends <- spell_year[
+  year %in% 2018:2022 &
+    !is.na(log_hourly_wage) &
+    is.finite(log_hourly_wage),
+  .(
+    mean_log_hourly_wage = mean(log_hourly_wage),
+    n_spells = .N,
+    n_workers = uniqueN(nninouv)
+  ),
+  by = .(year, female)
+]
+
+parallel_gender_trends[
+  ,
+  gender := factor(
+    fifelse(female == 1L, "Women", "Men"),
+    levels = c("Women", "Men")
+  )
+]
+
+parallel_gap_trends <- dcast(
+  parallel_gender_trends,
+  year ~ gender,
+  value.var = "mean_log_hourly_wage"
+)
+parallel_gap_trends[, `Women - Men` := Women - Men]
+parallel_gap_trends[, `Women - Men, log points` := 100 * `Women - Men`]
+
+parallel_plot_data <- rbindlist(
+  list(
+    parallel_gender_trends[
+      ,
+      .(
+        year,
+        series = gender,
+        statistic = "Mean log hourly wage",
+        value = mean_log_hourly_wage
+      )
+    ],
+    parallel_gap_trends[
+      ,
+      .(
+        year,
+        series = "Women - Men",
+        statistic = "Women - Men gap (log points)",
+        value = `Women - Men, log points`
+      )
+    ]
+  ),
+  use.names = TRUE
+)
+
+parallel_plot_data[
+  ,
+  `:=`(
+    series = factor(series, levels = c("Women", "Men", "Women - Men")),
+    statistic = factor(
+      statistic,
+      levels = c("Mean log hourly wage", "Women - Men gap (log points)")
+    )
+  )
+]
+
+fwrite(
+  parallel_plot_data,
+  file.path(figure_dir, "parallel_trends_log_hourly_wage.csv")
+)
+
+if (has_ggplot2) {
+  zero_line_data <- data.table(
+    statistic = factor(
+      "Women - Men gap (log points)",
+      levels = levels(parallel_plot_data$statistic)
+    )
+  )
+
+  parallel_trends_plot <- ggplot2::ggplot(
+    parallel_plot_data,
+    ggplot2::aes(x = year, y = value, color = series, group = series)
+  ) +
+    ggplot2::annotate(
+      "rect",
+      xmin = 2019.5,
+      xmax = 2020.5,
+      ymin = -Inf,
+      ymax = Inf,
+      fill = "grey80",
+      alpha = 0.25
+    ) +
+    ggplot2::geom_hline(
+      data = zero_line_data,
+      ggplot2::aes(yintercept = 0),
+      inherit.aes = FALSE,
+      color = "grey45",
+      linewidth = 0.35
+    ) +
+    ggplot2::geom_line(linewidth = 0.75) +
+    ggplot2::geom_point(size = 1.9) +
+    ggplot2::facet_wrap(~statistic, scales = "free_y", ncol = 1) +
+    ggplot2::scale_x_continuous(breaks = 2018:2022, minor_breaks = NULL) +
+    ggplot2::scale_color_manual(
+      values = c(
+        "Women" = "#1B9E77",
+        "Men" = "#D95F02",
+        "Women - Men" = "#386CB0"
+      )
+    ) +
+    ggplot2::labs(
+      title = "Gender trends in log hourly wages",
+      subtitle = "Annual spell-level means; 2020 is shown but excluded from the pre/post comparison",
+      x = "Year",
+      y = NULL,
+      color = NULL,
+      caption = "Notes: The lower panel reports the women-men gap in log points."
+    ) +
+    ggplot2::theme_minimal(base_size = 11) +
+    ggplot2::theme(
+      legend.position = "bottom",
+      legend.margin = ggplot2::margin(t = 2, b = 2),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major.x = ggplot2::element_line(color = "grey88", linewidth = 0.3),
+      panel.grid.major.y = ggplot2::element_line(color = "grey90", linewidth = 0.3),
+      plot.title = ggplot2::element_text(face = "bold", size = 13),
+      plot.subtitle = ggplot2::element_text(size = 9.5, color = "grey35"),
+      plot.caption = ggplot2::element_text(size = 8.5, color = "grey35", hjust = 0),
+      strip.text = ggplot2::element_text(face = "bold", size = 10.5),
+      strip.background = ggplot2::element_rect(fill = "grey95", color = NA)
+    )
+
+  ggplot2::ggsave(
+    file.path(figure_dir, "parallel_trends_log_hourly_wage.png"),
+    parallel_trends_plot,
+    width = 7,
+    height = 4.8,
+    dpi = 300
+  )
+
+  ggplot2::ggsave(
+    file.path(figure_dir, "parallel_trends_log_hourly_wage.pdf"),
+    parallel_trends_plot,
+    width = 7,
+    height = 4.8
+  )
+} else {
+  message("Package 'ggplot2' not installed; exported parallel trends data only.")
+}
 
 # =========================================================
 # Worker frame used for common worker counts
