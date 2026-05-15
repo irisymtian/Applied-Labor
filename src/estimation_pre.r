@@ -1014,21 +1014,153 @@ write_sorkin_decomposition_latex_table(
 )
 
 # =========================
+# 5.1. Minimal exports for the role-of-firms table
+# =========================
+# These exports are enough to rebuild the final table on another computer
+# without access to the individual-level DADS data.
+
+finite_mean <- function(x) {
+    x <- x[!is.na(x) & is.finite(x)]
+    if (length(x) == 0) return(NA_real_)
+    mean(x)
+}
+
+role_period_levels <- c("full", "pre", "post")
+
+role_wage_long <- bind_rows(wage_long_full, wage_long) %>%
+    mutate(period = as.character(period)) %>%
+    filter(period %in% role_period_levels)
+
+role_rank_long <- bind_rows(rank_full_long, rank_all_long) %>%
+    mutate(period = as.character(period)) %>%
+    filter(period %in% role_period_levels)
+
+role_akm_long <- bind_rows(akm_firm_premia_full, akm_firm_premia_long) %>%
+    mutate(period = as.character(period)) %>%
+    filter(period %in% role_period_levels)
+
+if (!"firm_id" %in% names(role_wage_long)) role_wage_long$firm_id <- NA_character_
+if (!"firm_id" %in% names(role_rank_long)) role_rank_long$firm_id <- NA_character_
+if (!"firm_id" %in% names(role_akm_long)) role_akm_long$firm_id <- NA_character_
+
+role_table_period_gender_wage <- role_wage_long %>%
+    group_by(period, female, gender) %>%
+    summarise(
+        mean_logy = finite_mean(logy),
+        n_worker_years = n(),
+        n_workers = n_distinct(worker_id),
+        .groups = "drop"
+    ) %>%
+    arrange(factor(period, levels = role_period_levels), female)
+
+role_table_employment_shares <- role_wage_long %>%
+    count(period, firm_node, firm_id, female, gender, name = "n_worker_years_firm") %>%
+    group_by(period, female) %>%
+    mutate(employment_share = n_worker_years_firm / sum(n_worker_years_firm)) %>%
+    ungroup() %>%
+    rename(firm_id_employment = firm_id, gender_employment = gender)
+
+role_table_sorkin_inputs <- role_rank_long %>%
+    transmute(
+        period, firm_node, female,
+        firm_id_sorkin = firm_id,
+        gender_sorkin = gender,
+        lambda_hat, offer_hat, V_hat
+    )
+
+role_table_akm_inputs <- role_akm_long %>%
+    transmute(
+        period, firm_node, female,
+        firm_id_akm = firm_id,
+        gender_akm = gender,
+        psi_hat, akm_n_obs = n_obs
+    )
+
+role_table_firm_gender_inputs <- role_table_employment_shares %>%
+    full_join(
+        role_table_sorkin_inputs,
+        by = c("period", "firm_node", "female")
+    ) %>%
+    full_join(
+        role_table_akm_inputs,
+        by = c("period", "firm_node", "female")
+    ) %>%
+    mutate(
+        firm_id = coalesce(firm_id_employment, firm_id_sorkin, firm_id_akm),
+        gender = ifelse(female == 1, "Female", "Male"),
+        alpha_rosen = V_hat - psi_hat,
+        psi_plus_alpha = V_hat
+    ) %>%
+    select(
+        period, firm_node, firm_id, female, gender,
+        employment_share, offer_hat, V_hat, psi_hat,
+        alpha_rosen, psi_plus_alpha, lambda_hat,
+        n_worker_years_firm, akm_n_obs
+    ) %>%
+    arrange(factor(period, levels = role_period_levels), firm_node, female)
+
+role_table_firm_period_inputs <- role_table_firm_gender_inputs %>%
+    mutate(gender_key = ifelse(female == 1, "female", "male")) %>%
+    select(
+        period, firm_node, firm_id, gender_key,
+        employment_share, offer_hat, V_hat, psi_hat,
+        alpha_rosen, psi_plus_alpha
+    ) %>%
+    pivot_wider(
+        names_from = gender_key,
+        values_from = c(
+            employment_share, offer_hat, V_hat, psi_hat,
+            alpha_rosen, psi_plus_alpha
+        ),
+        names_sep = "_"
+    ) %>%
+    arrange(factor(period, levels = role_period_levels), firm_node)
+
+write.csv(
+    role_table_period_gender_wage,
+    file.path(output_dir, "role_table_period_gender_wage.csv"),
+    row.names = FALSE
+)
+
+write.csv(
+    role_table_firm_gender_inputs,
+    file.path(output_dir, "role_table_firm_gender_inputs.csv"),
+    row.names = FALSE
+)
+
+write.csv(
+    role_table_firm_period_inputs,
+    file.path(output_dir, "role_table_firm_period_inputs.csv"),
+    row.names = FALSE
+)
+
+# =========================
 # 6. Figures
 # =========================
+
+axis_breaks_by <- function(width) {
+    force(width)
+    function(x) {
+        x <- x[is.finite(x)]
+        if (length(x) == 0) return(NULL)
+        seq(floor(min(x) / width) * width, ceiling(max(x) / width) * width, by = width)
+    }
+}
 
 p_wage_dist <- ggplot(wage_long, aes(x = logy, color = gender, fill = gender)) +
     geom_density(alpha = 0.25, linewidth = 0.8) +
     facet_wrap(~period) +
     labs(title = "Distribution of Log Wages by Gender and Period",
-         x = "Log hourly wage", y = "Density", color = "Gender", fill = "Gender") +
+         x = "Log hourly wage", y = "Density (area = 1 by group)", color = "Gender", fill = "Gender") +
     theme_minimal()
 ggsave(file.path(output_dir, "distribution_log_wage_gender_period.png"), p_wage_dist, width = 8, height = 5, dpi = 300)
 
 firm_premia_long <- akm_firm_premia_long %>%
     transmute(firm_node, firm_id, period, gender, psi = psi_hat)
 p_premia_dist <- ggplot(firm_premia_long, aes(x = psi, color = gender, fill = gender)) +
-    geom_density(alpha = 0.25, linewidth = 0.8) +
+    geom_histogram(aes(y = after_stat(density)), binwidth = 0.5,
+                   position = "identity", alpha = 0.35, boundary = 0) +
+    scale_x_continuous(breaks = axis_breaks_by(0.5)) +
     facet_wrap(~period) +
     labs(title = "Distribution of AKM Firm Premia by Gender and Period",
          x = "AKM firm premium", y = "Density", color = "Gender", fill = "Gender") +
