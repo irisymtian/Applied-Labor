@@ -402,14 +402,43 @@ monthly_pairs_full <- as.data.table(monthly_pairs_full)
 # =========================
 # 2. AKM firm premia on yearly data
 # =========================
-# Step 1: residualize logy on age controls and year FE
+# Step 1: residualize logy on demographic/job controls and year FE.
+# Sector and occupation are deliberately not absorbed here because they are
+# closely tied to firms and would remove part of the firm component.
+has_numeric_variation <- function(data, var) {
+    if (!var %in% names(data)) return(FALSE)
+    x <- data[[var]]
+    ok <- !is.na(x) & is.finite(x)
+    sum(ok) > 1L && length(unique(x[ok])) > 1L
+}
+
+make_akm_residual_formula <- function(data) {
+    controls <- c()
+
+    if (has_numeric_variation(data, "age")) {
+        controls <- c(controls, "age", "I(age^2)", "I(age^3)")
+    }
+    if (has_numeric_variation(data, "xp")) {
+        controls <- c(controls, "xp", "I(xp^2)")
+    }
+    if (has_numeric_variation(data, "ancsir")) {
+        controls <- c(controls, "ancsir", "I(ancsir^2)")
+    }
+    if (has_numeric_variation(data, "part_time")) {
+        controls <- c(controls, "part_time")
+    }
+
+    as.formula(paste("logy ~", paste(c(controls, "factor(year)"), collapse = " + ")))
+}
+
 estimate_akm_firm_premia <- function(data_subset, max_iter = 200, tol = 1e-7) {
     require_rows(data_subset, min_rows = 10, label = "AKM subset")
-    if (all(is.na(data_subset$age))) {
-        base_resid <- resid(lm(logy ~ factor(year), data = data_subset))
-    } else {
-        base_resid <- resid(lm(logy ~ age + I(age^2) + I(age^3) + factor(year), data = data_subset))
-    }
+    akm_residual_formula <- make_akm_residual_formula(data_subset)
+    model_vars <- intersect(all.vars(akm_residual_formula), names(data_subset))
+    complete_rows <- complete.cases(data_subset[, model_vars, drop = FALSE])
+    data_subset <- data_subset[complete_rows, , drop = FALSE]
+    require_rows(data_subset, min_rows = 10, label = "AKM subset after control filters")
+    base_resid <- resid(lm(akm_residual_formula, data = data_subset))
 
     # Step 2: decompose residual wage into worker effect alpha and firm premium psi
     worker_levels <- sort(unique(data_subset$worker_id))
@@ -915,9 +944,7 @@ did_fixed_effects <- c("worker_id", "year")
 if (has_factor_control(wage_long, "a38")) {
     did_fixed_effects <- c(did_fixed_effects, "a38")
 }
-occupation_fe <- if (has_factor_control(wage_long, "cs1")) {
-    "cs1"
-} else if (has_factor_control(wage_long, "pcs4")) {
+occupation_fe <- if (has_factor_control(wage_long, "pcs4")) {
     "pcs4"
 } else {
     NA_character_
